@@ -1,0 +1,200 @@
+package main
+
+import (
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+)
+
+func setupConfigRoutes(r *gin.Engine) {
+	r.GET("/config", serveConfigPage)
+	r.GET("/:variables/configure", serveDynamicConfigPage)
+}
+
+func serveConfigPage(c *gin.Context) {
+	// Full interactive config page embedded (from original config.html)
+	html := `<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Configuration Stremio Addon</title>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary-color: #4a90e2;
+      --secondary-color: #50e3c2;
+      --background-color: #f7f9fc;
+      --text-color: #333;
+      --input-border: #ccc;
+      --input-focus: var(--primary-color);
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Roboto', sans-serif;
+      background-color: var(--background-color);
+      color: var(--text-color);
+      margin: 0;
+      padding: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    .container {
+      background-color: #fff;
+      border-radius: 8px;
+      padding: 30px;
+      max-width: 500px;
+      width: 100%;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+    h1 {
+      text-align: center;
+      margin-bottom: 20px;
+      color: var(--primary-color);
+    }
+    label { font-weight: 500; margin-top: 15px; display: block; }
+    input {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid var(--input-border);
+      border-radius: 4px;
+      margin-top: 5px;
+      font-size: 1rem;
+    }
+    input:focus {
+      outline: none;
+      border-color: var(--input-focus);
+      box-shadow: 0 0 5px rgba(74, 144, 226, 0.5);
+    }
+    button {
+      background-color: var(--primary-color);
+      color: #fff;
+      border: none;
+      padding: 12px 20px;
+      border-radius: 4px;
+      font-size: 1rem;
+      cursor: pointer;
+      margin-top: 25px;
+      width: 100%;
+      transition: background-color 0.3s ease;
+    }
+    button:hover { background-color: var(--secondary-color); }
+    .result {
+      margin-top: 25px;
+      background-color: #f1f3f5;
+      border: 1px solid #e0e6ed;
+      border-radius: 4px;
+      padding: 15px;
+      word-break: break-all;
+    }
+    .result a {
+      color: var(--primary-color);
+      text-decoration: none;
+      font-weight: 500;
+    }
+    .result a:hover { text-decoration: underline; }
+  </style>
+  <script>
+    function getConfigFromURL() {
+      const pathParts = window.location.pathname.split('/').filter(p => p);
+      if (pathParts.length >= 2 && pathParts[pathParts.length - 1] === "configure") {
+        try {
+          const encodedConfig = pathParts[pathParts.length - 2];
+          const decodedConfig = JSON.parse(atob(encodedConfig));
+
+          document.getElementById('tmdb').value = decodedConfig.TMDB_API_KEY || "";
+          document.getElementById('files').value = decodedConfig.FILES_TO_SHOW || 2;
+          document.getElementById('res').value = (decodedConfig.RES_TO_SHOW || []).join(",");
+          document.getElementById('lang').value = (decodedConfig.LANG_TO_SHOW || []).join(",");
+          document.getElementById('codecs').value = (decodedConfig.CODECS_TO_SHOW || []).join(",");
+          document.getElementById('alldebrid').value = decodedConfig.API_KEY_ALLEDBRID || "";
+          document.getElementById('sharewood').value = decodedConfig.SHAREWOOD_PASSKEY || "";
+        } catch (error) {
+          console.error("Error decoding configuration:", error);
+        }
+      }
+    }
+
+    function generateConfig() {
+      const config = {
+        TMDB_API_KEY: document.getElementById('tmdb').value,
+        FILES_TO_SHOW: parseInt(document.getElementById('files').value),
+        RES_TO_SHOW: document.getElementById('res').value.split(',').map(s => s.trim()),
+        LANG_TO_SHOW: document.getElementById('lang').value.split(',').map(s => s.trim()),
+        CODECS_TO_SHOW: document.getElementById('codecs').value.split(',').map(s => s.trim()),
+        API_KEY_ALLEDBRID: document.getElementById('alldebrid').value,
+        SHAREWOOD_PASSKEY: document.getElementById('sharewood').value
+      };
+      const encodedConfig = btoa(JSON.stringify(config));
+      
+      const protocol = window.location.protocol;
+      const host = window.location.hostname;
+      const port = window.location.port ? ':' + window.location.port : '';
+      const baseUrl = '' + protocol + '//' + host + port + '';
+      
+      document.getElementById('result').innerHTML = 
+        '<p><strong>Encoded Configuration (base64):</strong></p>' +
+        '<p>' + encodedConfig + '</p>' +
+        '<p><strong>Configuration Page Link:</strong></p>' +
+        '<p>' +
+          '<a href="' + baseUrl + '/' + encodedConfig + '/configure" target="_blank">' +
+            baseUrl + '/' + encodedConfig + '/configure' +
+          '</a>' +
+        '</p>' +
+        '<p><strong>Manifest Link:</strong></p>' +
+        '<p>' +
+          '<a href="' + baseUrl + '/' + encodedConfig + '/manifest.json" target="_blank">' +
+            baseUrl + '/' + encodedConfig + '/manifest.json' +
+          '</a>' +
+        '</p>' +
+        '<p><strong>Example Stream Link (movie):</strong></p>' +
+        '<p>' +
+          '<a href="' + baseUrl + '/' + encodedConfig + '/stream/movie/tt1234567.json" target="_blank">' +
+            baseUrl + '/' + encodedConfig + '/stream/movie/tt1234567.json' +
+          '</a>' +
+        '</p>';
+    }
+
+    window.onload = getConfigFromURL;
+  </script>
+</head>
+<body>
+  <div class="container">
+    <h1>Configuration Addon</h1>
+    <label for="tmdb">TMDB API Key</label>
+    <input type="text" id="tmdb" placeholder="Entrez votre TMDB API Key">
+    
+    <label for="files">Files to Show</label>
+    <input type="number" id="files" value="2">
+    
+    <label for="res">Resolutions (séparées par une virgule)</label>
+    <input type="text" id="res" value="1080p">
+    
+    <label for="lang">Languages (séparés par une virgule)</label>
+    <input type="text" id="lang" value="MULTi,VOSTFR,FRENCH">
+
+    <label for="codecs">Codecs (séparés par une virgule)</label>
+    <input type="text" id="codecs" value="h264,h265,x264,x265,AV1">
+    
+    <label for="alldebrid">AllDebrid API Key</label>
+    <input type="text" id="alldebrid" placeholder="Entrez votre AllDebrid API Key">
+
+    <label for="sharewood">Sharewood Passkey</label>
+    <input type="text" id="sharewood" placeholder="Enter your Sharewood Passkey">
+    
+    <button onclick="generateConfig()">Générer la configuration</button>
+    <div id="result" class="result"></div>
+  </div>
+</body>
+</html>`
+	
+	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(html))
+}
+
+func serveDynamicConfigPage(c *gin.Context) {
+	// Just serve the same interactive page as /config
+	// The JavaScript will handle parsing the URL and populating the form
+	serveConfigPage(c)
+}
