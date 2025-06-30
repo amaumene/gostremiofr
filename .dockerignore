@@ -1,5 +1,5 @@
 # Ignore build artifacts
-ygg-stremio-ad
+gostremiofr
 *.db
 
 # Ignore development files
