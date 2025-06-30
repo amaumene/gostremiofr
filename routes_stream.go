@@ -32,12 +32,12 @@ func setupStreamRoutes(r *gin.Engine) {
 
 func handleStream(c *gin.Context) {
 	// Log the start of a new stream request
-	Logger.Info("--------------------")
+	Logger.Info("processing stream request")
 
 	// Retrieve configuration
 	config, err := GetConfig(c)
 	if err != nil {
-		Logger.Error("❌ Invalid configuration in request: ", err)
+		Logger.Errorf("invalid configuration in request: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -50,7 +50,7 @@ func handleStream(c *gin.Context) {
 		id = strings.TrimSuffix(id, ".json")
 	}
 	
-	Logger.Info(fmt.Sprintf("📥 Stream request received for ID: %s", id))
+	Logger.Infof("stream request received for ID: %s", id)
 
 	// Parse the ID to extract IMDB ID, season, and episode
 	parts := strings.Split(id, ":")
@@ -64,10 +64,10 @@ func handleStream(c *gin.Context) {
 	}
 
 	// Retrieve TMDB data based on IMDB ID
-	Logger.Info(fmt.Sprintf("🔍 Retrieving TMDB info for IMDB ID: %s", imdbId))
+	Logger.Infof("retrieving tmdb info for imdb id: %s", imdbId)
 	tmdbData, err := GetTMDBData(imdbId, config)
 	if err != nil || tmdbData == nil {
-		Logger.Warn(fmt.Sprintf("❌ Unable to retrieve TMDB info for %s", imdbId))
+		Logger.Warnf("unable to retrieve tmdb info for %s", imdbId)
 		c.JSON(http.StatusOK, StreamResponse{Streams: []Stream{}})
 		return
 	}
@@ -105,10 +105,10 @@ func handleStream(c *gin.Context) {
 	wg.Wait()
 
 	if yggErr != nil {
-		Logger.Error("❌ YGG search error: ", yggErr)
+		Logger.Errorf("ygg search error: %v", yggErr)
 	}
 	if sharewoodErr != nil {
-		Logger.Error("❌ Sharewood search error: ", sharewoodErr)
+		Logger.Errorf("sharewood search error: %v", sharewoodErr)
 	}
 
 	// Combine results from both sources
@@ -154,7 +154,7 @@ func handleStream(c *gin.Context) {
 		len(combinedResults.MovieTorrents)
 
 	if totalResults == 0 {
-		Logger.Warn("❌ No torrents found for the requested content.")
+		Logger.Warn("no torrents found for the requested content")
 		c.JSON(http.StatusOK, StreamResponse{Streams: []Stream{}})
 		return
 	}
@@ -216,25 +216,25 @@ func handleStream(c *gin.Context) {
 					Source: torrent.Source,
 				})
 			} else {
-				Logger.Warn(fmt.Sprintf("❌ Skipping torrent: %s (no hash found)", torrent.Title))
+				Logger.Warnf("skipping torrent: %s (no hash found)", torrent.Title)
 			}
 		}
 	}
 
-	Logger.Info(fmt.Sprintf("✅ Processed %d torrents (limited to %d).", len(magnets), maxTorrentsToProcess))
+	Logger.Infof("processed %d torrents (limited to %d)", len(magnets), maxTorrentsToProcess)
 
 	// Check if any magnets are available
 	if len(magnets) == 0 {
-		Logger.Warn("❌ No magnets available for upload.")
+		Logger.Warn("no magnets available for upload")
 		c.JSON(http.StatusOK, StreamResponse{Streams: []Stream{}})
 		return
 	}
 
 	// Upload magnets to AllDebrid
-	Logger.Info(fmt.Sprintf("🔄 Uploading %d magnets to AllDebrid", len(magnets)))
+	Logger.Infof("uploading %d magnets to alldebrid", len(magnets))
 	uploadedStatuses, err := UploadMagnets(magnets, config)
 	if err != nil {
-		Logger.Error("❌ Failed to upload magnets: ", err)
+		Logger.Errorf("failed to upload magnets: %v", err)
 		c.JSON(http.StatusOK, StreamResponse{Streams: []Stream{}})
 		return
 	}
@@ -242,24 +242,24 @@ func handleStream(c *gin.Context) {
 	// Filter ready torrents
 	var readyTorrents []ProcessedMagnet
 	for _, status := range uploadedStatuses {
-		if status.Ready == "✅ Ready" {
+		if status.Ready == "ready" {
 			readyTorrents = append(readyTorrents, status)
 		}
 	}
 
-	Logger.Info(fmt.Sprintf("✅ %d ready torrents found.", len(readyTorrents)))
+	Logger.Infof("%d ready torrents found", len(readyTorrents))
 
 	// Unlock files from ready torrents
 	var streams []Stream
 	for _, torrent := range readyTorrents {
 		if len(streams) >= config.FilesToShow {
-			Logger.Info(fmt.Sprintf("🎯 Reached the maximum number of streams (%d). Stopping.", config.FilesToShow))
+			Logger.Infof("reached maximum number of streams (%d), stopping", config.FilesToShow)
 			break
 		}
 
 		videoFiles, err := GetFilesFromMagnetID(torrent.ID, torrent.Source, config)
 		if err != nil {
-			Logger.Error("❌ Failed to get files from magnet: ", err)
+			Logger.Errorf("failed to get files from magnet: %v", err)
 			continue
 		}
 
@@ -273,7 +273,7 @@ func handleStream(c *gin.Context) {
 					filteredFiles = append(filteredFiles, file)
 				}
 			} else if mediaType == "movie" {
-				Logger.Info(fmt.Sprintf("✅ File included (movie): %s", file.Name))
+				Logger.Infof("file included (movie): %s", file.Name)
 				filteredFiles = append(filteredFiles, file)
 			}
 		}
@@ -281,13 +281,13 @@ func handleStream(c *gin.Context) {
 		// Unlock filtered files
 		for _, file := range filteredFiles {
 			if len(streams) >= config.FilesToShow {
-				Logger.Info(fmt.Sprintf("🎯 Reached the maximum number of streams (%d). Stopping.", config.FilesToShow))
+				Logger.Infof("reached maximum number of streams (%d), stopping", config.FilesToShow)
 				break
 			}
 
 			unlockedLink, err := UnlockFileLink(file.Link, config)
 			if err != nil || unlockedLink == "" {
-				Logger.Error("❌ Failed to unlock file: ", err)
+				Logger.Errorf("failed to unlock file: %v", err)
 				continue
 			}
 
@@ -296,7 +296,7 @@ func handleStream(c *gin.Context) {
 			
 			var streamTitle string
 			if season != "" && episode != "" {
-				streamTitle = fmt.Sprintf("%s - S%sE%s\n%s\n🎬 %s | 💾 %s",
+				streamTitle = fmt.Sprintf("%s - S%sE%s\n%s\n%s | %s",
 					tmdbData.Title,
 					PadString(season, 2),
 					PadString(episode, 2),
@@ -304,7 +304,7 @@ func handleStream(c *gin.Context) {
 					parsed.Source,
 					FormatSize(file.Size))
 			} else {
-				streamTitle = fmt.Sprintf("%s\n%s\n🎬 %s | 💾 %s",
+				streamTitle = fmt.Sprintf("%s\n%s\n%s | %s",
 					tmdbData.Title,
 					file.Name,
 					parsed.Source,
@@ -316,16 +316,16 @@ func handleStream(c *gin.Context) {
 				Title: streamTitle,
 				URL:   unlockedLink,
 			})
-			Logger.Info(fmt.Sprintf("✅ Unlocked video: %s", file.Name))
+			Logger.Infof("unlocked video: %s", file.Name)
 		}
 
 		// Log a warning if no files were unlocked
 		if len(filteredFiles) == 0 {
-			Logger.Warn(fmt.Sprintf("⚠️ No files matched the requested season/episode for torrent %s", torrent.Hash))
+			Logger.Warnf("no files matched the requested season/episode for torrent %s", torrent.Hash)
 		}
 	}
 
-	Logger.Info(fmt.Sprintf("🎉 %d stream(s) obtained", len(streams)))
+	Logger.Infof("generated %d streams", len(streams))
 	c.JSON(http.StatusOK, StreamResponse{Streams: streams})
 }
 
@@ -370,8 +370,8 @@ func matchesEpisode(title, season, episode string) bool {
 	pattern2 := fmt.Sprintf("s%s.e%s", seasonFormatted, episodeFormatted)
 	
 	matches := strings.Contains(titleLower, pattern1) || strings.Contains(titleLower, pattern2)
-	Logger.Debug(fmt.Sprintf("🔍 Checking episode pattern \"%s\" and \"%s\" against \"%s\": %t",
-		pattern1, pattern2, title, matches))
+	Logger.Debugf("checking episode pattern '%s' and '%s' against '%s': %t",
+		pattern1, pattern2, title, matches)
 	
 	return matches
 }

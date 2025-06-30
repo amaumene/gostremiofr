@@ -113,7 +113,7 @@ func UploadMagnets(magnets []MagnetInfo, config *Config) ([]ProcessedMagnet, err
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		Logger.Error("❌ Upload error: ", err)
+		Logger.Errorf("upload error: %v", err)
 		ScheduleCleanup(config, time.Minute)
 		return nil, err
 	}
@@ -121,28 +121,28 @@ func UploadMagnets(magnets []MagnetInfo, config *Config) ([]ProcessedMagnet, err
 
 	var response AllDebridUploadResponse
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		Logger.Error("❌ Failed to decode upload response: ", err)
+		Logger.Errorf("failed to decode upload response: %v", err)
 		ScheduleCleanup(config, time.Minute)
 		return nil, err
 	}
 
 	if response.Status == "success" {
-		Logger.Info(fmt.Sprintf("✅ Successfully uploaded %d magnets.", len(response.Data.Magnets)))
+		Logger.Infof("successfully uploaded %d magnets", len(response.Data.Magnets))
 		ScheduleCleanup(config, time.Minute)
 		
 		// Store magnets in database
 		for _, magnet := range response.Data.Magnets {
 			if err := StoreMagnet(fmt.Sprintf("%d", magnet.ID), magnet.Hash, magnet.Name); err != nil {
-				Logger.Warn("Failed to store magnet in database: ", err)
+				Logger.Warnf("failed to store magnet in database: %v", err)
 			}
 		}
 
 		// Convert to processed magnets
 		var processed []ProcessedMagnet
 		for _, magnet := range response.Data.Magnets {
-			ready := "❌ Not ready"
+			ready := "not ready"
 			if magnet.Ready {
-				ready = "✅ Ready"
+				ready = "ready"
 			}
 			
 			// Find source from original magnets
@@ -167,12 +167,12 @@ func UploadMagnets(magnets []MagnetInfo, config *Config) ([]ProcessedMagnet, err
 		return processed, nil
 	} else {
 		// Log error details with full response
-		Logger.Debug(fmt.Sprintf("❌ Full AllDebrid response: %+v", response))
+		Logger.Debugf("full alldebrid response: %+v", response)
 		if response.Error != nil && response.Error.Code != "" && response.Error.Message != "" {
-			Logger.Error(fmt.Sprintf("❌ Error uploading magnets: status=%s, code=%s, message=%s",
-				response.Status, response.Error.Code, response.Error.Message))
+			Logger.Errorf("error uploading magnets: status=%s, code=%s, message=%s",
+				response.Status, response.Error.Code, response.Error.Message)
 		} else {
-			Logger.Warn(fmt.Sprintf("❌ Error uploading magnets: status=%s (unknown error)", response.Status))
+			Logger.Warnf("error uploading magnets: status=%s (unknown error)", response.Status)
 		}
 		ScheduleCleanup(config, time.Minute)
 		return []ProcessedMagnet{}, nil
@@ -201,19 +201,19 @@ func GetFilesFromMagnetID(magnetID int, source string, config *Config) ([]VideoF
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		Logger.Error("❌ File retrieval error: ", err)
+		Logger.Errorf("file retrieval error: %v", err)
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	var response AllDebridFilesResponse
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		Logger.Error("❌ Failed to decode files response: ", err)
+		Logger.Errorf("failed to decode files response: %v", err)
 		return nil, err
 	}
 
 	if response.Status != "success" {
-		Logger.Warn("❌ Error retrieving files from AllDebrid")
+		Logger.Warn("failed to retrieve files from alldebrid")
 		return []VideoFile{}, nil
 	}
 
@@ -223,7 +223,7 @@ func GetFilesFromMagnetID(magnetID int, source string, config *Config) ([]VideoF
 	// Extract video files recursively
 	videoFiles := extractVideoFiles(files, videoExtensions, source)
 
-	Logger.Info(fmt.Sprintf("🎥 %d video(s) found for magnet ID: %d", len(videoFiles), magnetID))
+	Logger.Infof("%d video files found for magnet ID: %d", len(videoFiles), magnetID)
 	return videoFiles, nil
 }
 
@@ -276,21 +276,21 @@ func UnlockFileLink(fileLink string, config *Config) (string, error) {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		Logger.Error("❌ Unlock error: ", err)
+		Logger.Errorf("unlock error: %v", err)
 		return "", err
 	}
 	defer resp.Body.Close()
 
 	var response AllDebridUnlockResponse
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		Logger.Error("❌ Failed to decode unlock response: ", err)
+		Logger.Errorf("failed to decode unlock response: %v", err)
 		return "", err
 	}
 
 	if response.Status == "success" {
 		return response.Data.Link, nil
 	} else {
-		Logger.Warn("❌ Error unlocking link")
+		Logger.Warn("failed to unlock link")
 		return "", nil
 	}
 }
@@ -298,16 +298,16 @@ func UnlockFileLink(fileLink string, config *Config) (string, error) {
 func CleanupOldMagnets(config *Config, maxCount, deleteCount int) error {
 	magnets, err := GetAllMagnets()
 	if err != nil {
-		Logger.Error("❌ Error during magnet cleanup: ", err)
+		Logger.Errorf("error during magnet cleanup: %v", err)
 		return err
 	}
 
-	Logger.Debug(fmt.Sprintf("🔢 Magnets in SQLite: %d", len(magnets)))
+	Logger.Debugf("magnets in database: %d", len(magnets))
 	
 	if len(magnets) > maxCount {
 		toDelete := magnets[:deleteCount]
-		Logger.Info(fmt.Sprintf("🧹 Deleting %d oldest magnets (limit: %d) because total > %d.",
-			len(toDelete), deleteCount, maxCount))
+		Logger.Infof("deleting %d oldest magnets (limit: %d) because total > %d",
+			len(toDelete), deleteCount, maxCount)
 
 		// Create form data
 		body := &bytes.Buffer{}
@@ -332,7 +332,7 @@ func CleanupOldMagnets(config *Config, maxCount, deleteCount int) error {
 		client := &http.Client{}
 		resp, err := client.Do(req)
 		if err != nil {
-			Logger.Error("❌ Error deleting magnets: ", err)
+			Logger.Errorf("error deleting magnets: %v", err)
 			return err
 		}
 		defer resp.Body.Close()
@@ -341,7 +341,7 @@ func CleanupOldMagnets(config *Config, maxCount, deleteCount int) error {
 			Status string `json:"status"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-			Logger.Error("❌ Failed to decode delete response: ", err)
+			Logger.Errorf("failed to decode delete response: %v", err)
 			return err
 		}
 
@@ -354,16 +354,16 @@ func CleanupOldMagnets(config *Config, maxCount, deleteCount int) error {
 					names = append(names, magnet.ID)
 				}
 			}
-			Logger.Info("🗑️ Deleted magnets: " + strings.Join(names, ", "))
+			Logger.Infof("deleted magnets: %s", strings.Join(names, ", "))
 			
 			// Remove from database
 			for _, magnet := range toDelete {
 				if err := DeleteMagnet(magnet.ID); err != nil {
-					Logger.Warn("Failed to delete magnet from database: ", err)
+					Logger.Warnf("failed to delete magnet from database: %v", err)
 				}
 			}
 		} else {
-			Logger.Warn("❌ Failed to delete magnets from AllDebrid")
+			Logger.Warn("failed to delete magnets from alldebrid")
 		}
 	}
 

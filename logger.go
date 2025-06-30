@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"strings"
 
@@ -14,12 +13,13 @@ func InitializeLogger() {
 	Logger = logrus.New()
 
 	// Get log level from environment
-	logLevel := os.Getenv("LOG_LEVEL")
-	fmt.Printf("[LOGGER INIT] LOG_LEVEL env = \"%s\", using logLevel = \"%s\"\n", 
-		os.Getenv("LOG_LEVEL"), strings.ToLower(logLevel))
+	logLevel := strings.ToLower(os.Getenv("LOG_LEVEL"))
+	if logLevel == "" {
+		logLevel = "info"
+	}
 
 	// Set log level
-	switch strings.ToLower(logLevel) {
+	switch logLevel {
 	case "debug":
 		Logger.SetLevel(logrus.DebugLevel)
 	case "info":
@@ -30,12 +30,13 @@ func InitializeLogger() {
 		Logger.SetLevel(logrus.ErrorLevel)
 	default:
 		Logger.SetLevel(logrus.InfoLevel)
+		Logger.Warnf("unknown log level '%s', defaulting to info", os.Getenv("LOG_LEVEL"))
 	}
 
 	// Set formatter
 	Logger.SetFormatter(&logrus.TextFormatter{
 		FullTimestamp: true,
-		ForceColors:   true,
+		ForceColors:   false,
 	})
 
 	// Set output to stdout

@@ -35,7 +35,7 @@ func GetTorrentHashFromYgg(torrentId int) (string, error) {
 	
 	resp, err := http.Get(apiURL)
 	if err != nil {
-		Logger.Error(fmt.Sprintf("❌ Hash Retrieval Error for %d: %v", torrentId, err))
+		Logger.Errorf("hash retrieval failed for torrent %d: %v", torrentId, err)
 		return "", err
 	}
 	defer resp.Body.Close()
@@ -45,7 +45,7 @@ func GetTorrentHashFromYgg(torrentId int) (string, error) {
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		Logger.Error(fmt.Sprintf("❌ Failed to decode hash response for %d: %v", torrentId, err))
+		Logger.Errorf("failed to decode hash response for torrent %d: %v", torrentId, err)
 		return "", err
 	}
 
@@ -56,30 +56,30 @@ func ProcessTorrents(torrents []YggTorrent, mediaType, season, episode string, c
 	var results TorrentResults
 
 	if mediaType == "movie" {
-		Logger.Debug("🔍 Searching for movies")
+		Logger.Debug("searching for movies")
 		for _, torrent := range torrents {
 			if matchesFilters(torrent, config) {
 				torrent.Source = "YGG"
 				results.MovieTorrents = append(results.MovieTorrents, torrent)
 			}
 		}
-		Logger.Debug(fmt.Sprintf("🎬 %d movie torrents found.", len(results.MovieTorrents)))
+		Logger.Debugf("%d movie torrents found", len(results.MovieTorrents))
 	}
 
 	if mediaType == "series" {
-		Logger.Debug("🔍 Searching for complete series with the word \"COMPLETE\"")
+		Logger.Debug("searching for complete series with keyword 'COMPLETE'")
 		for _, torrent := range torrents {
 			if matchesFilters(torrent, config) && strings.Contains(strings.ToUpper(torrent.Title), "COMPLETE") {
 				torrent.Source = "YGG"
 				results.CompleteSeriesTorrents = append(results.CompleteSeriesTorrents, torrent)
 			}
 		}
-		Logger.Debug(fmt.Sprintf("🎬 %d complete series torrents found.", len(results.CompleteSeriesTorrents)))
+		Logger.Debugf("%d complete series torrents found", len(results.CompleteSeriesTorrents))
 	}
 
 	if mediaType == "series" && season != "" {
 		seasonFormatted := PadString(season, 2)
-		Logger.Debug(fmt.Sprintf("🔍 Searching for complete season: S%s", seasonFormatted))
+		Logger.Debugf("searching for complete season: S%s", seasonFormatted)
 		
 		seasonPattern := regexp.MustCompile(fmt.Sprintf(`(?i)s%se\d{2}`, seasonFormatted))
 		seasonDotPattern := regexp.MustCompile(fmt.Sprintf(`(?i)s%s\.e\d{2}`, seasonFormatted))
@@ -93,13 +93,13 @@ func ProcessTorrents(torrents []YggTorrent, mediaType, season, episode string, c
 				results.CompleteSeasonTorrents = append(results.CompleteSeasonTorrents, torrent)
 			}
 		}
-		Logger.Debug(fmt.Sprintf("🎬 %d complete season torrents found.", len(results.CompleteSeasonTorrents)))
+		Logger.Debugf("%d complete season torrents found", len(results.CompleteSeasonTorrents))
 	}
 
 	if mediaType == "series" && season != "" && episode != "" {
 		seasonFormatted := PadString(season, 2)
 		episodeFormatted := PadString(episode, 2)
-		Logger.Debug(fmt.Sprintf("🔍 Searching for specific episode: S%sE%s", seasonFormatted, episodeFormatted))
+		Logger.Debugf("searching for specific episode: S%sE%s", seasonFormatted, episodeFormatted)
 		
 		for _, torrent := range torrents {
 			if matchesFilters(torrent, config) {
@@ -113,14 +113,14 @@ func ProcessTorrents(torrents []YggTorrent, mediaType, season, episode string, c
 				}
 			}
 		}
-		Logger.Debug(fmt.Sprintf("🎬 %d episode torrents found.", len(results.EpisodeTorrents)))
+		Logger.Debugf("%d episode torrents found", len(results.EpisodeTorrents))
 	}
 
 	return results
 }
 
 func SearchYgg(title, mediaType, season, episode string, config *Config, titleFR string) (TorrentResults, error) {
-	Logger.Debug("🔍 Searching for torrents on YggTorrent")
+	Logger.Debug("searching for torrents on ygg torrent")
 	
 	torrents, err := performYggSearch(title, mediaType, config)
 	if err != nil {
@@ -128,7 +128,7 @@ func SearchYgg(title, mediaType, season, episode string, config *Config, titleFR
 	}
 
 	if len(torrents) == 0 && titleFR != "" && title != titleFR {
-		Logger.Warn(fmt.Sprintf("📢 No results found with \"%s\", trying with \"%s\"", title, titleFR))
+		Logger.Warnf("no results found with '%s', trying with '%s'", title, titleFR)
 		torrents, err = performYggSearch(titleFR, mediaType, config)
 		if err != nil {
 			return TorrentResults{}, err
@@ -136,7 +136,7 @@ func SearchYgg(title, mediaType, season, episode string, config *Config, titleFR
 	}
 
 	if len(torrents) == 0 {
-		Logger.Error(fmt.Sprintf("❌ No torrents found for %s", title))
+		Logger.Warnf("no torrents found for '%s'", title)
 		return TorrentResults{}, nil
 	}
 
@@ -162,22 +162,22 @@ func performYggSearch(searchTitle, mediaType string, config *Config) ([]YggTorre
 	}
 
 	requestURL := "https://yggapi.eu/torrents?" + params.Encode()
-	Logger.Debug("🔍 Performing YGG search with URL: " + requestURL)
+	Logger.Debugf("performing ygg search: %s", requestURL)
 
 	resp, err := http.Get(requestURL)
 	if err != nil {
-		Logger.Error("❌ Ygg Search Error: ", err)
+		Logger.Errorf("ygg search failed: %v", err)
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	var torrents []YggTorrent
 	if err := json.NewDecoder(resp.Body).Decode(&torrents); err != nil {
-		Logger.Error("❌ Failed to decode YGG response: ", err)
+		Logger.Errorf("failed to decode ygg response: %v", err)
 		return nil, err
 	}
 
-	Logger.Info(fmt.Sprintf("✅ Found %d torrents on YggTorrent for \"%s\".", len(torrents), searchTitle))
+	Logger.Infof("found %d torrents on ygg torrent for '%s'", len(torrents), searchTitle)
 
 	// Sort torrents by priority
 	sort.Slice(torrents, func(i, j int) bool {

@@ -32,7 +32,7 @@ func GetTMDBData(imdbId string, config *Config) (*TMDBData, error) {
 	// Check cache first
 	cachedData, err := GetCachedTMDB(imdbId)
 	if err == nil && cachedData != nil {
-		Logger.Info("✅ TMDB cache hit for IMDB ID: " + imdbId)
+		Logger.Debugf("tmdb cache hit for imdb id: %s", imdbId)
 		return &TMDBData{
 			Type:        cachedData.Type,
 			Title:       cachedData.Title,
@@ -48,14 +48,14 @@ func GetTMDBData(imdbId string, config *Config) (*TMDBData, error) {
 
 	resp, err := http.Get(apiURL + "?" + params.Encode())
 	if err != nil {
-		Logger.Error("❌ TMDB API request failed: ", err)
+		Logger.Errorf("tmdb api request failed: %v", err)
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	var findResponse TMDBFindResponse
 	if err := json.NewDecoder(resp.Body).Decode(&findResponse); err != nil {
-		Logger.Error("❌ Failed to decode TMDB response: ", err)
+		Logger.Errorf("failed to decode tmdb response: %v", err)
 		return nil, err
 	}
 
@@ -65,11 +65,11 @@ func GetTMDBData(imdbId string, config *Config) (*TMDBData, error) {
 		title := movie.Title
 		frenchTitle := movie.OriginalTitle
 
-		Logger.Info(fmt.Sprintf("✅ Movie found: %s (FR Title: %s)", title, frenchTitle))
+		Logger.Infof("movie found: %s (french title: %s)", title, frenchTitle)
 
 		// Store in cache
 		if err := StoreTMDB(imdbId, "movie", title, frenchTitle); err != nil {
-			Logger.Warn("Failed to cache TMDB data: ", err)
+			Logger.Warnf("failed to cache tmdb data: %v", err)
 		}
 
 		return &TMDBData{
@@ -85,11 +85,11 @@ func GetTMDBData(imdbId string, config *Config) (*TMDBData, error) {
 		title := tv.Name
 		frenchTitle := tv.OriginalName
 
-		Logger.Info(fmt.Sprintf("✅ Series found: %s (FR Title: %s)", title, frenchTitle))
+		Logger.Infof("series found: %s (french title: %s)", title, frenchTitle)
 
 		// Store in cache
 		if err := StoreTMDB(imdbId, "series", title, frenchTitle); err != nil {
-			Logger.Warn("Failed to cache TMDB data: ", err)
+			Logger.Warnf("failed to cache tmdb data: %v", err)
 		}
 
 		return &TMDBData{
@@ -100,6 +100,6 @@ func GetTMDBData(imdbId string, config *Config) (*TMDBData, error) {
 	}
 
 	// Return nil if no data is found
-	Logger.Warn("⚠️ No TMDB data found for IMDB ID: " + imdbId)
+	Logger.Warnf("no tmdb data found for imdb id: %s", imdbId)
 	return nil, nil
 }

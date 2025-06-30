@@ -431,7 +431,7 @@ func TestAllDebridStructures(t *testing.T) {
 	t.Run("ProcessedMagnetStructure", func(t *testing.T) {
 		processed := ProcessedMagnet{
 			Hash:   "abcdef123456",
-			Ready:  "✅ Ready",
+			Ready:  "ready",
 			Name:   "Test Magnet",
 			Size:   1073741824,
 			ID:     12345,
@@ -441,7 +441,7 @@ func TestAllDebridStructures(t *testing.T) {
 		jsonData, err := json.Marshal(processed)
 		require.NoError(t, err)
 		assert.Contains(t, string(jsonData), `"id":12345`)
-		assert.Contains(t, string(jsonData), `"ready":"✅ Ready"`)
+		assert.Contains(t, string(jsonData), `"ready":"ready"`)
 	})
 }
 

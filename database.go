@@ -38,13 +38,13 @@ func InitializeDatabase() {
 		// Ensure the directory exists
 		dbDir := filepath.Dir(dbPath)
 		if err := os.MkdirAll(dbDir, 0755); err != nil {
-			Logger.Fatal("Failed to create database directory: ", err)
+			Logger.Fatalf("failed to create database directory: %v", err)
 		}
 	}
 	
 	DB, err = sql.Open("sqlite3", dbPath)
 	if err != nil {
-		Logger.Fatal("Failed to open database: ", err)
+		Logger.Fatalf("failed to open database: %v", err)
 	}
 
 	// Create tables if they don't exist
@@ -70,11 +70,11 @@ func createTables() {
 	)`
 
 	if _, err := DB.Exec(tmdbTable); err != nil {
-		Logger.Fatal("Failed to create tmdb_cache table: ", err)
+		Logger.Fatalf("failed to create tmdb_cache table: %v", err)
 	}
 
 	if _, err := DB.Exec(magnetsTable); err != nil {
-		Logger.Fatal("Failed to create magnets table: ", err)
+		Logger.Fatalf("failed to create magnets table: %v", err)
 	}
 }
 

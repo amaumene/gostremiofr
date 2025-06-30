@@ -36,6 +36,6 @@ func main() {
 	}
 
 	// Start HTTP server
-	Logger.Info("✅ HTTP server running on port " + port)
+	Logger.Infof("starting HTTP server on port %s", port)
 	log.Fatal(http.ListenAndServe(":"+port, r))
 }

@@ -39,7 +39,7 @@ var subcategoryMap = map[string][]int{
 func SearchSharewood(title, mediaType, season, episode string, config *Config) (SharewoodResults, error) {
 	subcategories, exists := subcategoryMap[mediaType]
 	if !exists {
-		Logger.Error(fmt.Sprintf("❌ Invalid type \"%s\" for Sharewood search.", mediaType))
+		Logger.Errorf("invalid media type '%s' for Sharewood search", mediaType)
 		return SharewoodResults{}, nil
 	}
 
@@ -64,22 +64,22 @@ func SearchSharewood(title, mediaType, season, episode string, config *Config) (
 	requestURL := fmt.Sprintf("https://www.sharewood.tv/api/%s/search?%s", 
 		config.SharewoodPasskey, params.Encode())
 
-	Logger.Debug("🔍 Performing Sharewood search with URL: " + requestURL)
+	Logger.Debugf("performing Sharewood search: %s", requestURL)
 
 	resp, err := http.Get(requestURL)
 	if err != nil {
-		Logger.Error("❌ Sharewood Search Error: ", err)
+		Logger.Errorf("sharewood search failed: %v", err)
 		return SharewoodResults{}, err
 	}
 	defer resp.Body.Close()
 
 	var torrents []SharewoodTorrent
 	if err := json.NewDecoder(resp.Body).Decode(&torrents); err != nil {
-		Logger.Error("❌ Failed to decode Sharewood response: ", err)
+		Logger.Errorf("failed to decode sharewood response: %v", err)
 		return SharewoodResults{}, err
 	}
 
-	Logger.Info(fmt.Sprintf("✅ Found %d torrents on Sharewood for \"%s\".", len(torrents), title))
+	Logger.Infof("found %d torrents on sharewood for '%s'", len(torrents), title)
 
 	return processSharewoodTorrents(torrents, mediaType, season, episode, config), nil
 }
@@ -102,20 +102,20 @@ func processSharewoodTorrents(torrents []SharewoodTorrent, mediaType, season, ep
 	})
 
 	if mediaType == "movie" {
-		Logger.Debug("🔍 Filtering movies")
+		Logger.Debug("filtering movies")
 		for _, torrent := range torrents {
 			if matchesSharewoodFilters(torrent, config) {
 				torrent.Source = "SW"
 				results.MovieTorrents = append(results.MovieTorrents, torrent)
 			}
 		}
-		Logger.Debug(fmt.Sprintf("🎬 %d movie torrents found.", len(results.MovieTorrents)))
+		Logger.Debugf("%d movie torrents found", len(results.MovieTorrents))
 	}
 
 	if mediaType == "series" {
 		if season != "" {
 			seasonFormatted := PadString(season, 2)
-			Logger.Debug(fmt.Sprintf("🔍 Filtering complete seasons: S%s", seasonFormatted))
+			Logger.Debugf("filtering complete seasons: S%s", seasonFormatted)
 			
 			seasonPattern := regexp.MustCompile(fmt.Sprintf(`(?i)s%se\d{2}`, seasonFormatted))
 			seasonDotPattern := regexp.MustCompile(fmt.Sprintf(`(?i)s%s\.e\d{2}`, seasonFormatted))
@@ -129,7 +129,7 @@ func processSharewoodTorrents(torrents []SharewoodTorrent, mediaType, season, ep
 					results.CompleteSeasonTorrents = append(results.CompleteSeasonTorrents, torrent)
 				}
 			}
-			Logger.Debug(fmt.Sprintf("🎬 %d complete season torrents found.", len(results.CompleteSeasonTorrents)))
+			Logger.Debugf("%d complete season torrents found", len(results.CompleteSeasonTorrents))
 		}
 
 		if season != "" && episode != "" {
@@ -140,7 +140,7 @@ func processSharewoodTorrents(torrents []SharewoodTorrent, mediaType, season, ep
 				fmt.Sprintf("s%s.e%s", seasonFormatted, episodeFormatted),
 			}
 
-			Logger.Debug(fmt.Sprintf("🔍 Filtering specific episodes: Patterns %s", strings.Join(patterns, ", ")))
+			Logger.Debugf("filtering specific episodes: patterns %s", strings.Join(patterns, ", "))
 			
 			for _, torrent := range torrents {
 				nameLower := strings.ToLower(torrent.Name)
@@ -152,7 +152,7 @@ func processSharewoodTorrents(torrents []SharewoodTorrent, mediaType, season, ep
 					}
 				}
 			}
-			Logger.Debug(fmt.Sprintf("🎬 %d episode torrents found.", len(results.EpisodeTorrents)))
+			Logger.Debugf("%d episode torrents found", len(results.EpisodeTorrents))
 		}
 	}
 
