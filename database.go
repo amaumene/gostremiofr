@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -28,7 +29,19 @@ type Magnet struct {
 
 func InitializeDatabase() {
 	var err error
-	dbPath := filepath.Join(".", "streams.db")
+	
+	// Get database path from environment variable, default to current directory
+	dbPath := os.Getenv("DATABASE_PATH")
+	if dbPath == "" {
+		dbPath = filepath.Join(".", "streams.db")
+	} else {
+		// Ensure the directory exists
+		dbDir := filepath.Dir(dbPath)
+		if err := os.MkdirAll(dbDir, 0755); err != nil {
+			Logger.Fatal("Failed to create database directory: ", err)
+		}
+	}
+	
 	DB, err = sql.Open("sqlite3", dbPath)
 	if err != nil {
 		Logger.Fatal("Failed to open database: ", err)

@@ -35,6 +35,8 @@ EXPOSE 5000
 # Set environment variables
 ENV PORT=5000
 ENV LOG_LEVEL=info
+# DATABASE_PATH can be set to customize database location (default: ./streams.db)
+# ENV DATABASE_PATH=/data/streams.db
 
 # Run the application
 ENTRYPOINT ["/gostremiofr"]
