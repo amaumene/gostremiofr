@@ -5,12 +5,23 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
 
 var DB *sql.DB
+
+// Prepared statements for optimized queries
+var (
+	stmtGetTMDB    *sql.Stmt
+	stmtStoreTMDB  *sql.Stmt
+	stmtStoreMagnet *sql.Stmt
+	stmtGetMagnets *sql.Stmt
+	stmtDeleteMagnet *sql.Stmt
+	stmtMutex      sync.RWMutex
+)
 
 type TMDBCache struct {
 	IMDBId      string    `json:"imdb_id"`
@@ -47,8 +58,16 @@ func InitializeDatabase() {
 		Logger.Fatalf("failed to open database: %v", err)
 	}
 
+	// Configure connection pool
+	DB.SetMaxOpenConns(25)
+	DB.SetMaxIdleConns(5)
+	DB.SetConnMaxLifetime(5 * time.Minute)
+
 	// Create tables if they don't exist
 	createTables()
+	
+	// Initialize prepared statements
+	initPreparedStatements()
 }
 
 func createTables() {
@@ -69,6 +88,10 @@ func createTables() {
 		added_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	)`
 
+	// Create indexes for better performance
+	tmdbIndex := `CREATE INDEX IF NOT EXISTS idx_tmdb_created_at ON tmdb_cache(created_at)`
+	magnetsIndex := `CREATE INDEX IF NOT EXISTS idx_magnets_added_at ON magnets(added_at, id)`
+
 	if _, err := DB.Exec(tmdbTable); err != nil {
 		Logger.Fatalf("failed to create tmdb_cache table: %v", err)
 	}
@@ -76,14 +99,50 @@ func createTables() {
 	if _, err := DB.Exec(magnetsTable); err != nil {
 		Logger.Fatalf("failed to create magnets table: %v", err)
 	}
+
+	if _, err := DB.Exec(tmdbIndex); err != nil {
+		Logger.Fatalf("failed to create tmdb_cache index: %v", err)
+	}
+
+	if _, err := DB.Exec(magnetsIndex); err != nil {
+		Logger.Fatalf("failed to create magnets index: %v", err)
+	}
+}
+
+func initPreparedStatements() {
+	var err error
+	
+	stmtGetTMDB, err = DB.Prepare("SELECT type, title, french_title FROM tmdb_cache WHERE imdb_id = ?")
+	if err != nil {
+		Logger.Fatalf("failed to prepare get TMDB statement: %v", err)
+	}
+	
+	stmtStoreTMDB, err = DB.Prepare("INSERT OR REPLACE INTO tmdb_cache (imdb_id, type, title, french_title) VALUES (?, ?, ?, ?)")
+	if err != nil {
+		Logger.Fatalf("failed to prepare store TMDB statement: %v", err)
+	}
+	
+	stmtStoreMagnet, err = DB.Prepare("INSERT OR REPLACE INTO magnets (id, hash, name, added_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)")
+	if err != nil {
+		Logger.Fatalf("failed to prepare store magnet statement: %v", err)
+	}
+	
+	stmtGetMagnets, err = DB.Prepare("SELECT id, hash, name, added_at FROM magnets ORDER BY added_at ASC")
+	if err != nil {
+		Logger.Fatalf("failed to prepare get magnets statement: %v", err)
+	}
+	
+	stmtDeleteMagnet, err = DB.Prepare("DELETE FROM magnets WHERE id = ?")
+	if err != nil {
+		Logger.Fatalf("failed to prepare delete magnet statement: %v", err)
+	}
 }
 
 func GetCachedTMDB(imdbId string) (*TMDBCache, error) {
 	var cache TMDBCache
-	err := DB.QueryRow(
-		"SELECT type, title, french_title FROM tmdb_cache WHERE imdb_id = ?",
-		imdbId,
-	).Scan(&cache.Type, &cache.Title, &cache.FrenchTitle)
+	stmtMutex.RLock()
+	err := stmtGetTMDB.QueryRow(imdbId).Scan(&cache.Type, &cache.Title, &cache.FrenchTitle)
+	stmtMutex.RUnlock()
 
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -96,10 +155,9 @@ func GetCachedTMDB(imdbId string) (*TMDBCache, error) {
 }
 
 func StoreTMDB(imdbId, mediaType, title, frenchTitle string) error {
-	_, err := DB.Exec(
-		"INSERT OR REPLACE INTO tmdb_cache (imdb_id, type, title, french_title) VALUES (?, ?, ?, ?)",
-		imdbId, mediaType, title, frenchTitle,
-	)
+	stmtMutex.Lock()
+	_, err := stmtStoreTMDB.Exec(imdbId, mediaType, title, frenchTitle)
+	stmtMutex.Unlock()
 	return err
 }
 
@@ -108,15 +166,16 @@ func StoreMagnet(id, hash, name string) error {
 		return fmt.Errorf("id, hash, and name must not be empty")
 	}
 
-	_, err := DB.Exec(
-		"INSERT OR REPLACE INTO magnets (id, hash, name, added_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
-		id, hash, name,
-	)
+	stmtMutex.Lock()
+	_, err := stmtStoreMagnet.Exec(id, hash, name)
+	stmtMutex.Unlock()
 	return err
 }
 
 func GetAllMagnets() ([]Magnet, error) {
-	rows, err := DB.Query("SELECT id, hash, name, added_at FROM magnets ORDER BY added_at ASC")
+	stmtMutex.RLock()
+	rows, err := stmtGetMagnets.Query()
+	stmtMutex.RUnlock()
 	if err != nil {
 		return nil, err
 	}
@@ -136,6 +195,8 @@ func GetAllMagnets() ([]Magnet, error) {
 }
 
 func DeleteMagnet(id string) error {
-	_, err := DB.Exec("DELETE FROM magnets WHERE id = ?", id)
+	stmtMutex.Lock()
+	_, err := stmtDeleteMagnet.Exec(id)
+	stmtMutex.Unlock()
 	return err
 }

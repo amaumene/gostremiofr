@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"mime/multipart"
-	"net/http"
 	"strings"
 	"time"
 )
@@ -87,6 +86,11 @@ func ScheduleCleanup(config *Config, delayMs time.Duration) {
 }
 
 func UploadMagnets(magnets []MagnetInfo, config *Config) ([]ProcessedMagnet, error) {
+	if !allDebridRateLimiter.TakeToken() {
+		Logger.Warn("rate limited for AllDebrid upload")
+		return nil, fmt.Errorf("rate limited")
+	}
+	
 	apiURL := fmt.Sprintf("https://api.alldebrid.com/v4/magnet/upload?apikey=%s", config.APIKeyAllDebrid)
 
 	// Create form data
@@ -110,8 +114,7 @@ func UploadMagnets(magnets []MagnetInfo, config *Config) ([]ProcessedMagnet, err
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
 	// Make request
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := HTTPClient.Do(req)
 	if err != nil {
 		Logger.Errorf("upload error: %v", err)
 		ScheduleCleanup(config, time.Minute)
@@ -198,8 +201,7 @@ func GetFilesFromMagnetID(magnetID int, source string, config *Config) ([]VideoF
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
 	// Make request
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := HTTPClient.Do(req)
 	if err != nil {
 		Logger.Errorf("file retrieval error: %v", err)
 		return nil, err
@@ -273,8 +275,7 @@ func UnlockFileLink(fileLink string, config *Config) (string, error) {
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
 	// Make request
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := HTTPClient.Do(req)
 	if err != nil {
 		Logger.Errorf("unlock error: %v", err)
 		return "", err
@@ -329,8 +330,7 @@ func CleanupOldMagnets(config *Config, maxCount, deleteCount int) error {
 		req.Header.Set("Content-Type", writer.FormDataContentType())
 
 		// Make request
-		client := &http.Client{}
-		resp, err := client.Do(req)
+		resp, err := HTTPClient.Do(req)
 		if err != nil {
 			Logger.Errorf("error deleting magnets: %v", err)
 			return err

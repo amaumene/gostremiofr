@@ -4,12 +4,25 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
+
+// Shared HTTP client with connection pooling
+var HTTPClient = &http.Client{
+	Timeout: 30 * time.Second,
+	Transport: &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 10,
+		IdleConnTimeout:     90 * time.Second,
+	},
+}
 
 type Config struct {
 	TMDBAPIKey       string   `json:"TMDB_API_KEY"`
@@ -19,6 +32,32 @@ type Config struct {
 	LangToShow       []string `json:"LANG_TO_SHOW"`
 	CodecsToShow     []string `json:"CODECS_TO_SHOW"`
 	SharewoodPasskey string   `json:"SHAREWOOD_PASSKEY"`
+	
+	// Optimized lookup maps (populated on first use)
+	resMap    map[string]bool
+	langMap   map[string]bool
+	codecMap  map[string]bool
+	mapsOnce  sync.Once
+}
+
+// InitMaps initializes the lookup maps for faster filtering
+func (c *Config) InitMaps() {
+	c.mapsOnce.Do(func() {
+		c.resMap = make(map[string]bool)
+		for _, res := range c.ResToShow {
+			c.resMap[strings.ToLower(res)] = true
+		}
+		
+		c.langMap = make(map[string]bool)
+		for _, lang := range c.LangToShow {
+			c.langMap[strings.ToLower(lang)] = true
+		}
+		
+		c.codecMap = make(map[string]bool)
+		for _, codec := range c.CodecsToShow {
+			c.codecMap[strings.ToLower(codec)] = true
+		}
+	})
 }
 
 type ParsedFileName struct {
@@ -85,7 +124,13 @@ func PadString(s string, length int) string {
 	if len(s) >= length {
 		return s
 	}
-	return strings.Repeat("0", length-len(s)) + s
+	var builder strings.Builder
+	builder.Grow(length)
+	for i := 0; i < length-len(s); i++ {
+		builder.WriteByte('0')
+	}
+	builder.WriteString(s)
+	return builder.String()
 }
 
 func StringToInt(s string) int {

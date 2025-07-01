@@ -3,12 +3,26 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"net/url"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 )
+
+// Pre-compiled regex patterns for better performance
+var (
+	seasonEpisodeRegex    *regexp.Regexp
+	seasonDotEpisodeRegex *regexp.Regexp
+	regexOnce            sync.Once
+)
+
+func initRegexPatterns() {
+	regexOnce.Do(func() {
+		seasonEpisodeRegex = regexp.MustCompile(`(?i)s\d{2}e\d{2}`)
+		seasonDotEpisodeRegex = regexp.MustCompile(`(?i)s\d{2}\.e\d{2}`)
+	})
+}
 
 type YggTorrent struct {
 	ID     int    `json:"id"`
@@ -31,9 +45,14 @@ type Priority struct {
 }
 
 func GetTorrentHashFromYgg(torrentId int) (string, error) {
+	if !yggRateLimiter.TakeToken() {
+		Logger.Warnf("rate limited for YGG hash retrieval, torrent %d", torrentId)
+		return "", fmt.Errorf("rate limited")
+	}
+	
 	apiURL := fmt.Sprintf("https://yggapi.eu/torrent/%d", torrentId)
 	
-	resp, err := http.Get(apiURL)
+	resp, err := HTTPClient.Get(apiURL)
 	if err != nil {
 		Logger.Errorf("hash retrieval failed for torrent %d: %v", torrentId, err)
 		return "", err
@@ -78,6 +97,7 @@ func ProcessTorrents(torrents []YggTorrent, mediaType, season, episode string, c
 	}
 
 	if mediaType == "series" && season != "" {
+		initRegexPatterns()
 		seasonFormatted := PadString(season, 2)
 		Logger.Debugf("searching for complete season: S%s", seasonFormatted)
 		
@@ -144,6 +164,11 @@ func SearchYgg(title, mediaType, season, episode string, config *Config, titleFR
 }
 
 func performYggSearch(searchTitle, mediaType string, config *Config) ([]YggTorrent, error) {
+	if !yggRateLimiter.TakeToken() {
+		Logger.Warn("rate limited for YGG search")
+		return nil, fmt.Errorf("rate limited")
+	}
+	
 	var categoryIds []int
 	if mediaType == "movie" {
 		categoryIds = []int{2178, 2181, 2183}
@@ -164,7 +189,7 @@ func performYggSearch(searchTitle, mediaType string, config *Config) ([]YggTorre
 	requestURL := "https://yggapi.eu/torrents?" + params.Encode()
 	Logger.Debugf("performing ygg search: %s", requestURL)
 
-	resp, err := http.Get(requestURL)
+	resp, err := HTTPClient.Get(requestURL)
 	if err != nil {
 		Logger.Errorf("ygg search failed: %v", err)
 		return nil, err
@@ -197,30 +222,31 @@ func performYggSearch(searchTitle, mediaType string, config *Config) ([]YggTorre
 }
 
 func matchesFilters(torrent YggTorrent, config *Config) bool {
+	config.InitMaps()
 	titleLower := strings.ToLower(torrent.Title)
 	
-	// Check resolution
+	// Check resolution using map lookup
 	resMatch := false
-	for _, res := range config.ResToShow {
-		if strings.Contains(titleLower, strings.ToLower(res)) {
+	for res := range config.resMap {
+		if strings.Contains(titleLower, res) {
 			resMatch = true
 			break
 		}
 	}
 	
-	// Check language
+	// Check language using map lookup
 	langMatch := false
-	for _, lang := range config.LangToShow {
-		if strings.Contains(titleLower, strings.ToLower(lang)) {
+	for lang := range config.langMap {
+		if strings.Contains(titleLower, lang) {
 			langMatch = true
 			break
 		}
 	}
 	
-	// Check codec
+	// Check codec using map lookup
 	codecMatch := false
-	for _, codec := range config.CodecsToShow {
-		if strings.Contains(titleLower, strings.ToLower(codec)) {
+	for codec := range config.codecMap {
+		if strings.Contains(titleLower, codec) {
 			codecMatch = true
 			break
 		}

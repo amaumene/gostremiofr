@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"net/url"
 )
 
@@ -29,24 +28,38 @@ type TMDBData struct {
 }
 
 func GetTMDBData(imdbId string, config *Config) (*TMDBData, error) {
-	// Check cache first
+	// Check memory cache first
+	if memData, found := tmdbMemoryCache.Get(imdbId); found {
+		Logger.Debugf("tmdb memory cache hit for imdb id: %s", imdbId)
+		return memData, nil
+	}
+	
+	// Check database cache
 	cachedData, err := GetCachedTMDB(imdbId)
 	if err == nil && cachedData != nil {
-		Logger.Debugf("tmdb cache hit for imdb id: %s", imdbId)
-		return &TMDBData{
+		Logger.Debugf("tmdb database cache hit for imdb id: %s", imdbId)
+		tmdbData := &TMDBData{
 			Type:        cachedData.Type,
 			Title:       cachedData.Title,
 			FrenchTitle: cachedData.FrenchTitle,
-		}, nil
+		}
+		// Store in memory cache for faster future access
+		tmdbMemoryCache.Set(imdbId, tmdbData)
+		return tmdbData, nil
 	}
 
-	// Make API request
+	// Make API request with rate limiting
+	if !tmdbRateLimiter.TakeToken() {
+		Logger.Warn("rate limited for TMDB API")
+		return nil, fmt.Errorf("rate limited")
+	}
+	
 	apiURL := fmt.Sprintf("https://api.themoviedb.org/3/find/%s", imdbId)
 	params := url.Values{}
 	params.Add("api_key", config.TMDBAPIKey)
 	params.Add("external_source", "imdb_id")
 
-	resp, err := http.Get(apiURL + "?" + params.Encode())
+	resp, err := HTTPClient.Get(apiURL + "?" + params.Encode())
 	if err != nil {
 		Logger.Errorf("tmdb api request failed: %v", err)
 		return nil, err
@@ -67,16 +80,21 @@ func GetTMDBData(imdbId string, config *Config) (*TMDBData, error) {
 
 		Logger.Infof("movie found: %s (french title: %s)", title, frenchTitle)
 
-		// Store in cache
+		// Store in database cache
 		if err := StoreTMDB(imdbId, "movie", title, frenchTitle); err != nil {
 			Logger.Warnf("failed to cache tmdb data: %v", err)
 		}
 
-		return &TMDBData{
+		tmdbData := &TMDBData{
 			Type:        "movie",
 			Title:       title,
 			FrenchTitle: frenchTitle,
-		}, nil
+		}
+		
+		// Store in memory cache
+		tmdbMemoryCache.Set(imdbId, tmdbData)
+		
+		return tmdbData, nil
 	}
 
 	// Check if the result is a TV series
@@ -87,16 +105,21 @@ func GetTMDBData(imdbId string, config *Config) (*TMDBData, error) {
 
 		Logger.Infof("series found: %s (french title: %s)", title, frenchTitle)
 
-		// Store in cache
+		// Store in database cache
 		if err := StoreTMDB(imdbId, "series", title, frenchTitle); err != nil {
 			Logger.Warnf("failed to cache tmdb data: %v", err)
 		}
 
-		return &TMDBData{
+		tmdbData := &TMDBData{
 			Type:        "series",
 			Title:       title,
 			FrenchTitle: frenchTitle,
-		}, nil
+		}
+		
+		// Store in memory cache
+		tmdbMemoryCache.Set(imdbId, tmdbData)
+		
+		return tmdbData, nil
 	}
 
 	// Return nil if no data is found

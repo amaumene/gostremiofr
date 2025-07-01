@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -72,34 +74,57 @@ func handleStream(c *gin.Context) {
 		return
 	}
 
-	// Call searchYgg and searchSharewood in parallel
+	// Call searchYgg and searchSharewood in parallel with timeout
 	var yggResults TorrentResults
 	var sharewoodResults SharewoodResults
 	var wg sync.WaitGroup
 	var yggErr, sharewoodErr error
 
+	searchCtx, searchCancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer searchCancel()
+
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		yggResults, yggErr = SearchYgg(
-			tmdbData.Title,
-			tmdbData.Type,
-			season,
-			episode,
-			config,
-			tmdbData.FrenchTitle,
-		)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			yggResults, yggErr = SearchYgg(
+				tmdbData.Title,
+				tmdbData.Type,
+				season,
+				episode,
+				config,
+				tmdbData.FrenchTitle,
+			)
+		}()
+		
+		select {
+		case <-done:
+		case <-searchCtx.Done():
+			yggErr = searchCtx.Err()
+		}
 	}()
 
 	go func() {
 		defer wg.Done()
-		sharewoodResults, sharewoodErr = SearchSharewood(
-			tmdbData.Title,
-			tmdbData.Type,
-			season,
-			episode,
-			config,
-		)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			sharewoodResults, sharewoodErr = SearchSharewood(
+				tmdbData.Title,
+				tmdbData.Type,
+				season,
+				episode,
+				config,
+			)
+		}()
+		
+		select {
+		case <-done:
+		case <-searchCtx.Done():
+			sharewoodErr = searchCtx.Err()
+		}
 	}()
 
 	wg.Wait()
@@ -111,12 +136,13 @@ func handleStream(c *gin.Context) {
 		Logger.Errorf("sharewood search error: %v", sharewoodErr)
 	}
 
-	// Combine results from both sources
+	// Pre-allocate slices with estimated capacity
+	estimatedCapacity := config.FilesToShow * 2
 	combinedResults := CombinedTorrentResults{
-		CompleteSeriesTorrents: make([]interface{}, 0),
-		CompleteSeasonTorrents: make([]interface{}, 0),
-		EpisodeTorrents:        make([]interface{}, 0),
-		MovieTorrents:          make([]interface{}, 0),
+		CompleteSeriesTorrents: make([]interface{}, 0, estimatedCapacity),
+		CompleteSeasonTorrents: make([]interface{}, 0, estimatedCapacity),
+		EpisodeTorrents:        make([]interface{}, 0, estimatedCapacity),
+		MovieTorrents:          make([]interface{}, 0, estimatedCapacity),
 	}
 
 	// Add YGG results
@@ -160,7 +186,7 @@ func handleStream(c *gin.Context) {
 	}
 
 	// Combine torrents based on type (series or movie)
-	var allTorrents []TorrentInfo
+	allTorrents := make([]TorrentInfo, 0, maxTorrentsToProcess)
 	if mediaType == "series" {
 		// Add complete series torrents
 		for _, t := range combinedResults.CompleteSeriesTorrents {
@@ -198,8 +224,18 @@ func handleStream(c *gin.Context) {
 		allTorrents = allTorrents[:maxTorrentsToProcess]
 	}
 
-	// Retrieve hashes for the torrents
-	var magnets []MagnetInfo
+	// Retrieve hashes for the torrents using worker pool
+	magnets := make([]MagnetInfo, 0, len(allTorrents))
+	magnetCh := make(chan MagnetInfo, len(allTorrents))
+	
+	// Worker pool for hash retrieval
+	const maxWorkers = 5
+	sem := make(chan struct{}, maxWorkers)
+	var wg sync.WaitGroup
+	
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	
 	for _, torrent := range allTorrents {
 		if torrent.Hash != "" {
 			magnets = append(magnets, MagnetInfo{
@@ -208,17 +244,44 @@ func handleStream(c *gin.Context) {
 				Source: torrent.Source,
 			})
 		} else if torrent.ID != 0 {
-			hash, err := GetTorrentHashFromYgg(torrent.ID)
-			if err == nil && hash != "" {
-				magnets = append(magnets, MagnetInfo{
-					Hash:   hash,
-					Title:  torrent.Title,
-					Source: torrent.Source,
-				})
-			} else {
-				Logger.Warnf("skipping torrent: %s (no hash found)", torrent.Title)
-			}
+			wg.Add(1)
+			go func(t TorrentInfo) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					hash, err := GetTorrentHashFromYgg(t.ID)
+					if err == nil && hash != "" {
+						select {
+						case magnetCh <- MagnetInfo{
+							Hash:   hash,
+							Title:  t.Title,
+							Source: t.Source,
+						}:
+						case <-ctx.Done():
+							return
+						}
+					} else {
+						Logger.Warnf("skipping torrent: %s (no hash found)", t.Title)
+					}
+				}
+			}(torrent)
 		}
+	}
+	
+	// Close channel when all workers are done
+	go func() {
+		wg.Wait()
+		close(magnetCh)
+	}()
+	
+	// Collect results
+	for magnet := range magnetCh {
+		magnets = append(magnets, magnet)
 	}
 
 	Logger.Infof("processed %d torrents (limited to %d)", len(magnets), maxTorrentsToProcess)
@@ -240,7 +303,7 @@ func handleStream(c *gin.Context) {
 	}
 
 	// Filter ready torrents
-	var readyTorrents []ProcessedMagnet
+	readyTorrents := make([]ProcessedMagnet, 0, len(uploadedStatuses))
 	for _, status := range uploadedStatuses {
 		if status.Ready == "ready" {
 			readyTorrents = append(readyTorrents, status)
@@ -250,7 +313,7 @@ func handleStream(c *gin.Context) {
 	Logger.Infof("%d ready torrents found", len(readyTorrents))
 
 	// Unlock files from ready torrents
-	var streams []Stream
+	streams := make([]Stream, 0, config.FilesToShow)
 	for _, torrent := range readyTorrents {
 		if len(streams) >= config.FilesToShow {
 			Logger.Infof("reached maximum number of streams (%d), stopping", config.FilesToShow)
@@ -264,7 +327,7 @@ func handleStream(c *gin.Context) {
 		}
 
 		// Filter relevant video files
-		var filteredFiles []VideoFile
+		filteredFiles := make([]VideoFile, 0, len(videoFiles))
 		for _, file := range videoFiles {
 			fileName := strings.ToLower(file.Name)
 

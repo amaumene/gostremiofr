@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"net/url"
 	"regexp"
 	"sort"
@@ -64,9 +63,14 @@ func SearchSharewood(title, mediaType, season, episode string, config *Config) (
 	requestURL := fmt.Sprintf("https://www.sharewood.tv/api/%s/search?%s", 
 		config.SharewoodPasskey, params.Encode())
 
+	if !sharewoodRateLimiter.TakeToken() {
+		Logger.Warn("rate limited for Sharewood search")
+		return SharewoodResults{}, fmt.Errorf("rate limited")
+	}
+
 	Logger.Debugf("performing Sharewood search: %s", requestURL)
 
-	resp, err := http.Get(requestURL)
+	resp, err := HTTPClient.Get(requestURL)
 	if err != nil {
 		Logger.Errorf("sharewood search failed: %v", err)
 		return SharewoodResults{}, err
@@ -160,31 +164,32 @@ func processSharewoodTorrents(torrents []SharewoodTorrent, mediaType, season, ep
 }
 
 func matchesSharewoodFilters(torrent SharewoodTorrent, config *Config) bool {
+	config.InitMaps()
 	nameLower := strings.ToLower(torrent.Name)
 	languageLower := strings.ToLower(torrent.Language)
 	
-	// Check resolution
+	// Check resolution using map lookup
 	resMatch := false
-	for _, res := range config.ResToShow {
-		if strings.Contains(nameLower, strings.ToLower(res)) {
+	for res := range config.resMap {
+		if strings.Contains(nameLower, res) {
 			resMatch = true
 			break
 		}
 	}
 	
-	// Check language
+	// Check language using map lookup
 	langMatch := false
-	for _, lang := range config.LangToShow {
-		if strings.Contains(languageLower, strings.ToLower(lang)) {
+	for lang := range config.langMap {
+		if strings.Contains(languageLower, lang) {
 			langMatch = true
 			break
 		}
 	}
 	
-	// Check codec
+	// Check codec using map lookup
 	codecMatch := false
-	for _, codec := range config.CodecsToShow {
-		if strings.Contains(nameLower, strings.ToLower(codec)) {
+	for codec := range config.codecMap {
+		if strings.Contains(nameLower, codec) {
 			codecMatch = true
 			break
 		}
