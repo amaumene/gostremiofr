@@ -27,6 +27,7 @@ func initRegexPatterns() {
 type YggTorrent struct {
 	ID     int    `json:"id"`
 	Title  string `json:"title"`
+	Size   int64  `json:"size"`
 	Hash   string `json:"hash,omitempty"`
 	Source string `json:"source,omitempty"`
 }
@@ -204,7 +205,7 @@ func performYggSearch(searchTitle, mediaType string, config *Config) ([]YggTorre
 
 	Logger.Infof("found %d torrents on ygg torrent for '%s'", len(torrents), searchTitle)
 
-	// Sort torrents by priority
+	// Sort torrents by priority, with size as tie-breaker
 	sort.Slice(torrents, func(i, j int) bool {
 		priorityA := prioritizeTorrent(torrents[i], config)
 		priorityB := prioritizeTorrent(torrents[j], config)
@@ -215,7 +216,11 @@ func performYggSearch(searchTitle, mediaType string, config *Config) ([]YggTorre
 		if priorityA.Language != priorityB.Language {
 			return priorityA.Language < priorityB.Language
 		}
-		return priorityA.Codec < priorityB.Codec
+		if priorityA.Codec != priorityB.Codec {
+			return priorityA.Codec < priorityB.Codec
+		}
+		// If all priorities are equal, sort by size (biggest first)
+		return torrents[i].Size > torrents[j].Size
 	})
 
 	return torrents, nil
