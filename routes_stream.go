@@ -11,6 +11,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const maxTorrentsToProcess = 100
+
 type StreamResponse struct {
 	Streams []Stream `json:"streams"`
 }
@@ -231,7 +233,7 @@ func handleStream(c *gin.Context) {
 	// Worker pool for hash retrieval
 	const maxWorkers = 5
 	sem := make(chan struct{}, maxWorkers)
-	var wg sync.WaitGroup
+	var hashWg sync.WaitGroup
 	
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -244,9 +246,9 @@ func handleStream(c *gin.Context) {
 				Source: torrent.Source,
 			})
 		} else if torrent.ID != 0 {
-			wg.Add(1)
+			hashWg.Add(1)
 			go func(t TorrentInfo) {
-				defer wg.Done()
+				defer hashWg.Done()
 				sem <- struct{}{}
 				defer func() { <-sem }()
 				
@@ -275,7 +277,7 @@ func handleStream(c *gin.Context) {
 	
 	// Close channel when all workers are done
 	go func() {
-		wg.Wait()
+		hashWg.Wait()
 		close(magnetCh)
 	}()
 	
