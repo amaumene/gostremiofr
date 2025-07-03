@@ -6,7 +6,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gostremiofr/gostremiofr/internal/models"
+	"github.com/amaumene/gostremiofr/internal/models"
 )
 
 func (h *Handler) handleManifest(c *gin.Context) {

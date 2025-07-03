@@ -2,7 +2,6 @@ package config
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -12,12 +11,10 @@ import (
 
 type Config struct {
 	TMDBAPIKey       string   `json:"TMDB_API_KEY"`
-	APIKeyAllDebrid  string   `json:"API_KEY_ALLEDBRID"`
+	APIKeyAllDebrid  string   `json:"API_KEY_ALLDEBRID"`
 	FilesToShow      int      `json:"FILES_TO_SHOW"`
 	ResToShow        []string `json:"RES_TO_SHOW"`
 	LangToShow       []string `json:"LANG_TO_SHOW"`
-	CodecsToShow     []string `json:"CODECS_TO_SHOW"`
-	SharewoodPasskey string   `json:"SHAREWOOD_PASSKEY"`
 	
 	DatabasePath string        `json:"DATABASE_PATH"`
 	CacheSize    int           `json:"CACHE_SIZE"`
@@ -25,7 +22,6 @@ type Config struct {
 	
 	resMap    map[string]bool
 	langMap   map[string]bool
-	codecMap  map[string]bool
 	mapsOnce  sync.Once
 }
 
@@ -45,9 +41,6 @@ func Load() (*Config, error) {
 		cfg.APIKeyAllDebrid = adKey
 	}
 	
-	if swKey := os.Getenv("SHAREWOOD_PASSKEY"); swKey != "" {
-		cfg.SharewoodPasskey = swKey
-	}
 	
 	configFile := os.Getenv("CONFIG_FILE")
 	if configFile == "" {
@@ -64,15 +57,13 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 	
-	cfg.initMaps()
+	cfg.InitMaps()
 	
 	return cfg, nil
 }
 
 func (c *Config) Validate() error {
-	if c.TMDBAPIKey == "" {
-		return errors.New("TMDB_API_KEY is required")
-	}
+	// TMDB_API_KEY is now optional, configured via web interface
 	
 	if c.FilesToShow <= 0 {
 		c.FilesToShow = 10
@@ -86,14 +77,11 @@ func (c *Config) Validate() error {
 		c.LangToShow = []string{"multi", "french", "english"}
 	}
 	
-	if len(c.CodecsToShow) == 0 {
-		c.CodecsToShow = []string{"h264", "h265", "x264", "x265", "hevc", "av1"}
-	}
 	
 	return nil
 }
 
-func (c *Config) initMaps() {
+func (c *Config) InitMaps() {
 	c.mapsOnce.Do(func() {
 		c.resMap = make(map[string]bool)
 		for _, res := range c.ResToShow {
@@ -103,11 +91,6 @@ func (c *Config) initMaps() {
 		c.langMap = make(map[string]bool)
 		for _, lang := range c.LangToShow {
 			c.langMap[strings.ToLower(lang)] = true
-		}
-		
-		c.codecMap = make(map[string]bool)
-		for _, codec := range c.CodecsToShow {
-			c.codecMap[strings.ToLower(codec)] = true
 		}
 	})
 }
@@ -120,8 +103,75 @@ func (c *Config) IsLanguageAllowed(lang string) bool {
 	return c.langMap[strings.ToLower(lang)]
 }
 
-func (c *Config) IsCodecAllowed(codec string) bool {
-	return c.codecMap[strings.ToLower(codec)]
+func (c *Config) GetResolutionPriority(res string) int {
+	resLower := strings.ToLower(res)
+	for i, allowedRes := range c.ResToShow {
+		if strings.ToLower(allowedRes) == resLower {
+			// Higher index = lower priority (reverse order for sorting)
+			return len(c.ResToShow) - i
+		}
+	}
+	return 0 // Not in list = lowest priority
+}
+
+
+// CreateFromUserData creates a config from user-provided data and existing config
+func CreateFromUserData(userConfig map[string]interface{}, baseConfig *Config) *Config {
+	cfg := &Config{
+		FilesToShow: 6, // Default from user config
+	}
+	
+	// Copy from existing config if available
+	if baseConfig != nil {
+		*cfg = *baseConfig
+	}
+	
+	// Override with user configuration
+	if val, ok := userConfig["FILES_TO_SHOW"]; ok {
+		if floatVal, ok := val.(float64); ok {
+			cfg.FilesToShow = int(floatVal)
+		}
+	}
+	
+	if val, ok := userConfig["RES_TO_SHOW"]; ok {
+		if arr, ok := val.([]interface{}); ok {
+			cfg.ResToShow = make([]string, len(arr))
+			for i, v := range arr {
+				if str, ok := v.(string); ok {
+					cfg.ResToShow[i] = str
+				}
+			}
+		}
+	}
+	
+	if val, ok := userConfig["LANG_TO_SHOW"]; ok {
+		if arr, ok := val.([]interface{}); ok {
+			cfg.LangToShow = make([]string, len(arr))
+			for i, v := range arr {
+				if str, ok := v.(string); ok {
+					cfg.LangToShow[i] = str
+				}
+			}
+		}
+	}
+	
+	if val, ok := userConfig["TMDB_API_KEY"]; ok {
+		if str, ok := val.(string); ok {
+			cfg.TMDBAPIKey = str
+		}
+	}
+	
+	if val, ok := userConfig["API_KEY_ALLDEBRID"]; ok {
+		if str, ok := val.(string); ok {
+			cfg.APIKeyAllDebrid = str
+		}
+	}
+	
+	// Validate and initialize the config
+	cfg.Validate()
+	cfg.InitMaps()
+	
+	return cfg
 }
 
 func getEnvOrDefault(key, defaultValue string) string {

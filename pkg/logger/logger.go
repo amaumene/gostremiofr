@@ -30,7 +30,7 @@ type logger struct {
 }
 
 func New() Logger {
-	debug := os.Getenv("DEBUG") == "true"
+	debug := os.Getenv("DEBUG") == "true" || os.Getenv("LOG_LEVEL") == "debug"
 	
 	return &logger{
 		debugLogger: log.New(os.Stdout, "[DEBUG] ", log.LstdFlags|log.Lshortfile),

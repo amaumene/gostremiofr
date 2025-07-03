@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gostremiofr/gostremiofr/pkg/logger"
+	"github.com/amaumene/gostremiofr/pkg/logger"
 )
 
 type gzipResponseWriter struct {
@@ -78,11 +78,11 @@ func Logger(log logger.Logger) gin.HandlerFunc {
 
 		switch {
 		case statusCode >= 500:
-			log.Errorf("%s %s %d %v %s", clientIP, method, statusCode, latency, path)
+			log.Errorf("[Middleware] HTTP request failed - %s %s %d %v %s", clientIP, method, statusCode, latency, path)
 		case statusCode >= 400:
-			log.Warnf("%s %s %d %v %s", clientIP, method, statusCode, latency, path)
+			log.Warnf("[Middleware] warning: client error - %s %s %d %v %s", clientIP, method, statusCode, latency, path)
 		default:
-			log.Infof("%s %s %d %v %s", clientIP, method, statusCode, latency, path)
+			log.Infof("[Middleware] HTTP request completed - %s %s %d %v %s", clientIP, method, statusCode, latency, path)
 		}
 	}
 }

@@ -77,8 +77,6 @@ func TestConfigurePageWithVariables(t *testing.T) {
 		FilesToShow:      5,
 		ResToShow:        []string{"1080p", "720p"},
 		LangToShow:       []string{"MULTi", "FRENCH"},
-		CodecsToShow:     []string{"h264", "h265"},
-		SharewoodPasskey: "test-sharewood-key",
 	}
 
 	configJSON, _ := json.Marshal(config)
@@ -104,7 +102,6 @@ func TestManifestEndpoint(t *testing.T) {
 		FilesToShow:     5,
 		ResToShow:       []string{"1080p"},
 		LangToShow:      []string{"FRENCH"},
-		CodecsToShow:    []string{"h264"},
 	}
 
 	configJSON, _ := json.Marshal(config)
@@ -150,7 +147,6 @@ func TestStreamEndpointParameterParsing(t *testing.T) {
 		FilesToShow:     5,
 		ResToShow:       []string{"1080p"},
 		LangToShow:      []string{"FRENCH"},
-		CodecsToShow:    []string{"h264"},
 	}
 
 	configJSON, _ := json.Marshal(config)
@@ -309,7 +305,6 @@ func TestTorrentProcessing(t *testing.T) {
 	config := &Config{
 		ResToShow:    []string{"1080p", "720p"},
 		LangToShow:   []string{"MULTi", "FRENCH"},
-		CodecsToShow: []string{"h264", "h265"},
 	}
 
 	t.Run("YggTorrentProcessing", func(t *testing.T) {
@@ -321,7 +316,7 @@ func TestTorrentProcessing(t *testing.T) {
 
 		// Test movie processing - should filter only matching torrents
 		results := ProcessTorrents(torrents, "movie", "", "", config)
-		// Only the movie torrent should match all filters (resolution, language, codec)
+		// Only the movie torrent should match all filters (resolution, language)
 		movieCount := 0
 		for _, torrent := range results.MovieTorrents {
 			if torrent.Title == "Movie.2023.1080p.MULTi.h264-GROUP" {
@@ -369,7 +364,6 @@ func TestRouteParameterParsing(t *testing.T) {
 		FilesToShow:     1,
 		ResToShow:       []string{"1080p"},
 		LangToShow:      []string{"FRENCH"},
-		CodecsToShow:    []string{"h264"},
 	}
 
 	configJSON, _ := json.Marshal(config)
@@ -462,7 +456,6 @@ func TestFullRequestFlow(t *testing.T) {
 		FilesToShow:     2,
 		ResToShow:       []string{"1080p"},
 		LangToShow:      []string{"FRENCH"},
-		CodecsToShow:    []string{"h264"},
 	}
 
 	configJSON, _ := json.Marshal(config)

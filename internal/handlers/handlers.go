@@ -2,8 +2,8 @@ package handlers
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/gostremiofr/gostremiofr/internal/config"
-	"github.com/gostremiofr/gostremiofr/internal/services"
+	"github.com/amaumene/gostremiofr/internal/config"
+	"github.com/amaumene/gostremiofr/internal/services"
 )
 
 type Handler struct {
@@ -25,6 +25,11 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	r.GET("/manifest.json", h.handleManifest)
 	r.GET("/:configuration/manifest.json", h.handleManifestWithConfig)
 	r.GET("/:configuration/stream/:type/:id.json", h.handleStream)
+}
+
+// HandleStream is an exported wrapper for the internal handleStream method
+func (h *Handler) HandleStream(c *gin.Context) {
+	h.handleStream(c)
 }
 
 func (h *Handler) handleHome(c *gin.Context) {

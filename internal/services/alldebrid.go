@@ -8,26 +8,33 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gostremiofr/gostremiofr/internal/models"
-	"github.com/gostremiofr/gostremiofr/pkg/logger"
-	"github.com/gostremiofr/gostremiofr/pkg/ratelimiter"
+	"github.com/amaumene/gostremiofr/internal/models"
+	"github.com/amaumene/gostremiofr/pkg/alldebrid"
+	"github.com/amaumene/gostremiofr/pkg/logger"
+	"github.com/amaumene/gostremiofr/pkg/ratelimiter"
+	"github.com/amaumene/gostremiofr/pkg/security"
 )
 
 type AllDebrid struct {
 	apiKey      string
 	rateLimiter *ratelimiter.TokenBucket
-	httpClient  *http.Client
+	client      *alldebrid.Client
 	logger      logger.Logger
+	validator   *security.APIKeyValidator
 }
 
 func NewAllDebrid(apiKey string) *AllDebrid {
+	validator := security.NewAPIKeyValidator()
+	
+	// Sanitize the API key
+	sanitizedKey := validator.SanitizeAPIKey(apiKey)
+	
 	return &AllDebrid{
-		apiKey:      apiKey,
+		apiKey:      sanitizedKey,
 		rateLimiter: ratelimiter.NewTokenBucket(15, 3),
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
-		logger: logger.New(),
+		client:      alldebrid.NewClient(),
+		logger:      logger.New(),
+		validator:   validator,
 	}
 }
 
@@ -36,10 +43,14 @@ func (a *AllDebrid) CheckMagnets(magnets []models.MagnetInfo, apiKey string) ([]
 		apiKey = a.apiKey
 	}
 	
-	if apiKey == "" {
-		return nil, fmt.Errorf("AllDebrid API key not provided")
+	// Sanitize and validate the API key
+	apiKey = a.validator.SanitizeAPIKey(apiKey)
+	if !a.validator.IsValidAllDebridKey(apiKey) {
+		a.logger.Warnf("[AllDebrid] warning: invalid API key format provided (key: %s)", a.validator.MaskAPIKey(apiKey))
+		return nil, fmt.Errorf("invalid AllDebrid API key format")
 	}
 	
+	// Build hash list for the API call
 	var hashes []string
 	hashToMagnet := make(map[string]models.MagnetInfo)
 	
@@ -50,20 +61,46 @@ func (a *AllDebrid) CheckMagnets(magnets []models.MagnetInfo, apiKey string) ([]
 	
 	a.rateLimiter.Wait()
 	
-	requestURL := fmt.Sprintf("https://api.alldebrid.com/v4/magnet/status?agent=stremio&apikey=%s&magnets[]=%s",
-		apiKey, strings.Join(hashes, "&magnets[]="))
+	// Use POST to avoid exposing API key in URL
+	requestURL := "https://api.alldebrid.com/v4/magnet/status"
 	
-	resp, err := a.httpClient.Get(requestURL)
+	// Prepare form data
+	formData := url.Values{}
+	formData.Set("agent", "stremio")
+	formData.Set("apikey", apiKey)
+	for _, hash := range hashes {
+		formData.Add("magnets[]", hash)
+	}
+	
+	a.logger.Debugf("[AllDebrid] checking %d specific magnets (API key: %s)", len(hashes), a.validator.MaskAPIKey(apiKey))
+	
+	// Use a standard HTTP client for this manual API call
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	
+	resp, err := httpClient.PostForm(requestURL, formData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check magnets: %w", err)
 	}
 	defer resp.Body.Close()
 	
+	// Parse the response manually since we're using the direct API
 	var response struct {
 		Status string `json:"status"`
 		Data   struct {
-			Magnets []models.AllDebridMagnet `json:"magnets"`
+			Magnets []struct {
+				Hash       string        `json:"hash"`
+				Status     string        `json:"status"`
+				StatusCode int           `json:"statusCode"`
+				Filename   string        `json:"filename"`
+				Size       float64       `json:"size"`
+				ID         int64         `json:"id"`
+				Links      []interface{} `json:"links"`
+			} `json:"magnets"`
 		} `json:"data"`
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
 	}
 	
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
@@ -71,22 +108,38 @@ func (a *AllDebrid) CheckMagnets(magnets []models.MagnetInfo, apiKey string) ([]
 	}
 	
 	if response.Status != "success" {
+		if response.Error.Message != "" {
+			return nil, fmt.Errorf("AllDebrid API error: %s - %s", response.Error.Code, response.Error.Message)
+		}
 		return nil, fmt.Errorf("AllDebrid API error: %s", response.Status)
 	}
 	
 	var processed []models.ProcessedMagnet
 	for _, magnet := range response.Data.Magnets {
 		if original, ok := hashToMagnet[magnet.Hash]; ok {
+			// StatusCode 4 means "Ready" (files are available)
+			ready := magnet.StatusCode == 4 && len(magnet.Links) > 0
+			name := magnet.Filename
+			if name == "" {
+				name = original.Title
+			}
+			
+			a.logger.Debugf("[AllDebrid] magnet processing details - hash: %s, statusCode: %d, links: %d, ready: %v", 
+				magnet.Hash, magnet.StatusCode, len(magnet.Links), ready)
+			
 			processed = append(processed, models.ProcessedMagnet{
 				Hash:   magnet.Hash,
-				Ready:  magnet.Ready,
-				Name:   magnet.Name,
+				Ready:  ready,
+				Name:   name,
 				Size:   magnet.Size,
 				ID:     magnet.ID,
 				Source: original.Source,
+				Links:  magnet.Links,
 			})
 		}
 	}
+	
+	a.logger.Debugf("[AllDebrid] API call returned %d results for %d requested magnets", len(processed), len(magnets))
 	
 	return processed, nil
 }
@@ -96,46 +149,36 @@ func (a *AllDebrid) UploadMagnet(hash, title, apiKey string) error {
 		apiKey = a.apiKey
 	}
 	
-	if apiKey == "" {
-		return fmt.Errorf("AllDebrid API key not provided")
+	// Sanitize and validate the API key
+	apiKey = a.validator.SanitizeAPIKey(apiKey)
+	if !a.validator.IsValidAllDebridKey(apiKey) {
+		a.logger.Errorf("[AllDebrid] failed to validate API key for upload: invalid format (key: %s)", a.validator.MaskAPIKey(apiKey))
+		return fmt.Errorf("invalid AllDebrid API key format")
 	}
 	
 	a.rateLimiter.Wait()
 	
 	magnetURL := fmt.Sprintf("magnet:?xt=urn:btih:%s&dn=%s", hash, url.QueryEscape(title))
-	requestURL := fmt.Sprintf("https://api.alldebrid.com/v4/magnet/upload?agent=stremio&apikey=%s&magnets[]=%s",
-		apiKey, url.QueryEscape(magnetURL))
 	
-	resp, err := a.httpClient.Get(requestURL)
+	// Use our local client
+	resp, err := a.client.UploadMagnet(apiKey, []string{magnetURL})
 	if err != nil {
 		return fmt.Errorf("failed to upload magnet: %w", err)
 	}
-	defer resp.Body.Close()
 	
-	var response struct {
-		Status string `json:"status"`
-		Data   struct {
-			Magnets []struct {
-				Error struct {
-					Code    string `json:"code"`
-					Message string `json:"message"`
-				} `json:"error"`
-			} `json:"magnets"`
-		} `json:"data"`
+	if resp.Status != "success" {
+		if resp.Error != nil {
+			return fmt.Errorf("AllDebrid API error: %s - %s", resp.Error.Code, resp.Error.Message)
+		}
+		return fmt.Errorf("AllDebrid API error: %s", resp.Status)
 	}
 	
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return fmt.Errorf("failed to decode response: %w", err)
-	}
-	
-	if response.Status != "success" {
-		return fmt.Errorf("AllDebrid API error: %s", response.Status)
-	}
-	
-	if len(response.Data.Magnets) > 0 && response.Data.Magnets[0].Error.Code != "" {
-		return fmt.Errorf("upload error: %s - %s", 
-			response.Data.Magnets[0].Error.Code,
-			response.Data.Magnets[0].Error.Message)
+	// Check for upload errors
+	if len(resp.Data.Magnets) > 0 {
+		firstMagnet := resp.Data.Magnets[0]
+		if firstMagnet.Error != nil {
+			return fmt.Errorf("upload error: %s - %s", firstMagnet.Error.Code, firstMagnet.Error.Message)
+		}
 	}
 	
 	return nil
@@ -146,69 +189,79 @@ func (a *AllDebrid) GetVideoFiles(magnetID, apiKey string) ([]models.VideoFile, 
 		apiKey = a.apiKey
 	}
 	
-	if apiKey == "" {
-		return nil, fmt.Errorf("AllDebrid API key not provided")
+	// Sanitize and validate the API key
+	apiKey = a.validator.SanitizeAPIKey(apiKey)
+	if !a.validator.IsValidAllDebridKey(apiKey) {
+		a.logger.Errorf("[AllDebrid] failed to validate API key for video files: invalid format (key: %s)", a.validator.MaskAPIKey(apiKey))
+		return nil, fmt.Errorf("invalid AllDebrid API key format")
 	}
 	
 	a.rateLimiter.Wait()
 	
-	requestURL := fmt.Sprintf("https://api.alldebrid.com/v4/magnet/files?agent=stremio&apikey=%s&id=%s",
-		apiKey, magnetID)
-	
-	resp, err := a.httpClient.Get(requestURL)
+	// Use our local client
+	resp, err := a.client.GetMagnetFiles(apiKey, magnetID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get video files: %w", err)
 	}
-	defer resp.Body.Close()
 	
-	var response struct {
-		Status string `json:"status"`
-		Data   struct {
-			Files []models.FileInfo `json:"files"`
-		} `json:"data"`
-	}
-	
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-	
-	if response.Status != "success" {
-		return nil, fmt.Errorf("AllDebrid API error: %s", response.Status)
+	if resp.Status != "success" {
+		if resp.Error != nil {
+			return nil, fmt.Errorf("AllDebrid API error: %s - %s", resp.Error.Code, resp.Error.Message)
+		}
+		return nil, fmt.Errorf("AllDebrid API error: %s", resp.Status)
 	}
 	
 	var videoFiles []models.VideoFile
-	for _, file := range response.Data.Files {
-		videoFiles = append(videoFiles, extractVideoFiles(file, "")...)
+	for _, magnet := range resp.Data.Magnets {
+		for _, link := range magnet.Links {
+			if isVideoFile(link.Filename) {
+				videoFiles = append(videoFiles, models.VideoFile{
+					Name:   link.Filename,
+					Size:   float64(link.Size),
+					Link:   link.Link,
+					Source: "AllDebrid",
+				})
+			}
+		}
 	}
 	
 	return videoFiles, nil
 }
 
-func extractVideoFiles(file models.FileInfo, parentPath string) []models.VideoFile {
-	var videos []models.VideoFile
-	
-	fullPath := parentPath
-	if fullPath != "" {
-		fullPath += "/" + file.Name
-	} else {
-		fullPath = file.Name
+func (a *AllDebrid) UnlockLink(link, apiKey string) (string, error) {
+	if apiKey == "" {
+		apiKey = a.apiKey
 	}
 	
-	if len(file.Files) > 0 {
-		for _, subFile := range file.Files {
-			videos = append(videos, extractVideoFiles(subFile, fullPath)...)
+	// Sanitize and validate the API key
+	apiKey = a.validator.SanitizeAPIKey(apiKey)
+	if !a.validator.IsValidAllDebridKey(apiKey) {
+		a.logger.Errorf("[AllDebrid] failed to validate API key for unlock: invalid format (key: %s)", a.validator.MaskAPIKey(apiKey))
+		return "", fmt.Errorf("invalid AllDebrid API key format")
+	}
+	
+	a.rateLimiter.Wait()
+	
+	// Use our local client
+	resp, err := a.client.UnlockLink(apiKey, link)
+	if err != nil {
+		return "", fmt.Errorf("failed to unlock link: %w", err)
+	}
+	
+	if resp.Status != "success" {
+		if resp.Error != nil {
+			return "", fmt.Errorf("AllDebrid unlock API error: %s - %s", resp.Error.Code, resp.Error.Message)
 		}
-	} else if isVideoFile(file.Name) {
-		videos = append(videos, models.VideoFile{
-			Name:   fullPath,
-			Size:   file.Size,
-			Link:   file.Link,
-			Source: file.Source,
-		})
+		return "", fmt.Errorf("AllDebrid unlock API error: %s", resp.Status)
 	}
 	
-	return videos
+	if resp.Data.Link == "" {
+		return "", fmt.Errorf("no direct link returned from unlock API")
+	}
+	
+	return resp.Data.Link, nil
 }
+
 
 func isVideoFile(filename string) bool {
 	videoExtensions := []string{".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".mpg", ".mpeg"}

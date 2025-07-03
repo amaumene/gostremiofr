@@ -1,17 +1,18 @@
 package services
 
 import (
-	"github.com/gostremiofr/gostremiofr/internal/cache"
-	"github.com/gostremiofr/gostremiofr/internal/database"
-	"github.com/gostremiofr/gostremiofr/internal/models"
-	"github.com/gostremiofr/gostremiofr/pkg/logger"
+	"github.com/amaumene/gostremiofr/internal/cache"
+	"github.com/amaumene/gostremiofr/internal/config"
+	"github.com/amaumene/gostremiofr/internal/database"
+	"github.com/amaumene/gostremiofr/internal/models"
+	"github.com/amaumene/gostremiofr/pkg/logger"
 )
 
 type Container struct {
 	TMDB      TMDBService
 	AllDebrid AllDebridService
 	YGG       YGGService
-	Sharewood SharewoodService
+	EZTV      EZTVService
 	Cache     *cache.LRUCache
 	DB        *database.DB
 	Logger    logger.Logger
@@ -25,13 +26,15 @@ type AllDebridService interface {
 	CheckMagnets(magnets []models.MagnetInfo, apiKey string) ([]models.ProcessedMagnet, error)
 	UploadMagnet(hash, title, apiKey string) error
 	GetVideoFiles(magnetID, apiKey string) ([]models.VideoFile, error)
+	UnlockLink(link, apiKey string) (string, error)
 }
 
 type YGGService interface {
-	SearchTorrents(query string, category string) (*models.TorrentResults, error)
+	SearchTorrents(query string, category string, season, episode int) (*models.TorrentResults, error)
 	GetTorrentHash(torrentID string) (string, error)
 }
 
-type SharewoodService interface {
-	SearchTorrents(query string, mediaType string, season, episode int) (*models.SharewoodResults, error)
+type EZTVService interface {
+	SearchTorrentsByIMDB(imdbID string, season, episode int) (*models.TorrentResults, error)
+	SetConfig(cfg *config.Config)
 }

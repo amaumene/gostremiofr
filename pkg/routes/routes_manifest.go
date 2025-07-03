@@ -1,9 +1,10 @@
-package main
+package routes
 
 import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/amaumene/gostremiofr/pkg/helpers"
 )
 
 type Manifest struct {
@@ -21,12 +22,12 @@ type BehaviorHints struct {
 	Configurable bool `json:"configurable"`
 }
 
-func setupManifestRoutes(r *gin.Engine) {
+func SetupManifestRoutes(r *gin.Engine) {
 	r.GET("/:variables/manifest.json", serveManifest)
 }
 
 func serveManifest(c *gin.Context) {
-	_, err := GetConfig(c)
+	_, err := helpers.GetConfig(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

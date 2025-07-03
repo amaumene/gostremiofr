@@ -1,4 +1,4 @@
-package main
+package routes
 
 import (
 	"net/http"
@@ -6,7 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func setupConfigRoutes(r *gin.Engine) {
+func SetupConfigRoutes(r *gin.Engine) {
 	r.GET("/config", serveConfigPage)
 	r.GET("/:variables/configure", serveDynamicConfigPage)
 }
@@ -108,9 +108,7 @@ func serveConfigPage(c *gin.Context) {
           document.getElementById('files').value = decodedConfig.FILES_TO_SHOW || 2;
           document.getElementById('res').value = (decodedConfig.RES_TO_SHOW || []).join(",");
           document.getElementById('lang').value = (decodedConfig.LANG_TO_SHOW || []).join(",");
-          document.getElementById('codecs').value = (decodedConfig.CODECS_TO_SHOW || []).join(",");
-          document.getElementById('alldebrid').value = decodedConfig.API_KEY_ALLEDBRID || "";
-          document.getElementById('sharewood').value = decodedConfig.SHAREWOOD_PASSKEY || "";
+          document.getElementById('alldebrid').value = decodedConfig.API_KEY_ALLDEBRID || "";
         } catch (error) {
           console.error("Error decoding configuration:", error);
         }
@@ -123,9 +121,7 @@ func serveConfigPage(c *gin.Context) {
         FILES_TO_SHOW: parseInt(document.getElementById('files').value),
         RES_TO_SHOW: document.getElementById('res').value.split(',').map(s => s.trim()),
         LANG_TO_SHOW: document.getElementById('lang').value.split(',').map(s => s.trim()),
-        CODECS_TO_SHOW: document.getElementById('codecs').value.split(',').map(s => s.trim()),
-        API_KEY_ALLEDBRID: document.getElementById('alldebrid').value,
-        SHAREWOOD_PASSKEY: document.getElementById('sharewood').value
+        API_KEY_ALLDEBRID: document.getElementById('alldebrid').value,
       };
       const encodedConfig = btoa(JSON.stringify(config));
       
@@ -175,14 +171,10 @@ func serveConfigPage(c *gin.Context) {
     <label for="lang">Languages (séparés par une virgule)</label>
     <input type="text" id="lang" value="MULTi,VOSTFR,FRENCH">
 
-    <label for="codecs">Codecs (séparés par une virgule)</label>
-    <input type="text" id="codecs" value="h264,h265,x264,x265,AV1">
     
     <label for="alldebrid">AllDebrid API Key</label>
     <input type="text" id="alldebrid" placeholder="Entrez votre AllDebrid API Key">
 
-    <label for="sharewood">Sharewood Passkey</label>
-    <input type="text" id="sharewood" placeholder="Enter your Sharewood Passkey">
     
     <button onclick="generateConfig()">Générer la configuration</button>
     <div id="result" class="result"></div>

@@ -2,20 +2,22 @@
 FROM golang:alpine AS builder
 
 # Install build dependencies
-RUN apk add --no-cache gcc musl-dev sqlite-dev
+RUN apk add --no-cache gcc musl-dev sqlite-dev git
 
 # Set working directory
 WORKDIR /app
 
 # Copy source code
-COPY *.go ./
+COPY . ./
+
+RUN rm go.mod go.sum
 
 RUN go mod init github.com/amaumene/gostremiofr
 
 RUN go mod tidy
 
 # Build the application with static linking
-RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -ldflags '-extldflags "-static"' -o gostremiofr .
+RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -ldflags '-extldflags "-static"' -o gostremiofr ./cmd/gostremiofr
 
 # Runtime stage
 FROM scratch

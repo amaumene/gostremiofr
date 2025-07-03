@@ -1,6 +1,5 @@
 package models
 
-import "time"
 
 type Stream struct {
 	Name  string `json:"name,omitempty"`
@@ -27,32 +26,11 @@ type YggTorrent struct {
 	Source string `json:"source,omitempty"`
 }
 
-type SharewoodTorrent struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	InfoHash    string    `json:"infoHash"`
-	Type        string    `json:"type"`
-	Size        int64     `json:"size"`
-	Seeders     int       `json:"seeders"`
-	Leechers    int       `json:"leechers"`
-	Language    string    `json:"language"`
-	DownloadURL string    `json:"downloadUrl"`
-	CreatedAt   time.Time `json:"createdAt"`
-	Source      string    `json:"source"`
-}
-
 type TorrentResults struct {
 	CompleteSeriesTorrents []TorrentInfo
 	CompleteSeasonTorrents []TorrentInfo
 	EpisodeTorrents        []TorrentInfo
 	MovieTorrents          []TorrentInfo
-}
-
-type SharewoodResults struct {
-	CompleteSeriesTorrents []SharewoodTorrent
-	CompleteSeasonTorrents []SharewoodTorrent
-	EpisodeTorrents        []SharewoodTorrent
-	MovieTorrents          []SharewoodTorrent
 }
 
 type CombinedTorrentResults struct {
@@ -90,11 +68,13 @@ type MagnetInfo struct {
 }
 
 type AllDebridMagnet struct {
-	Hash   string  `json:"hash"`
-	Ready  bool    `json:"ready"`
-	Name   string  `json:"name"`
-	Size   float64 `json:"size"`
-	ID     string  `json:"id"`
+	Hash       string  `json:"hash"`
+	Status     string  `json:"status"`
+	StatusCode int     `json:"statusCode"`
+	Filename   string  `json:"filename"`
+	Size       float64 `json:"size"`
+	ID         int64   `json:"id"`
+	Links      []interface{} `json:"links"`
 }
 
 type ProcessedMagnet struct {
@@ -102,8 +82,9 @@ type ProcessedMagnet struct {
 	Ready  bool
 	Name   string
 	Size   float64
-	ID     string
+	ID     int64
 	Source string
+	Links  []interface{}
 }
 
 type VideoFile struct {
@@ -130,7 +111,6 @@ type ParsedFileName struct {
 type Priority struct {
 	Resolution int
 	Language   int
-	Codec      int
 }
 
 type Manifest struct {
