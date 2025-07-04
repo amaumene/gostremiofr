@@ -41,7 +41,7 @@ type EZTVResponse struct {
 	Torrents       []EZTVTorrent `json:"torrents"`
 }
 
-func NewEZTV(db *database.DB, cache *cache.LRUCache) *EZTV {
+func NewEZTV(db database.Database, cache *cache.LRUCache) *EZTV {
 	return &EZTV{
 		BaseTorrentService: NewBaseTorrentService(db, cache, 5, 1),
 	}
@@ -90,6 +90,6 @@ func (e *EZTV) SearchTorrentsByIMDB(imdbID string, season, episode int) (*models
 
 func (e *EZTV) processTorrents(torrents []EZTVTorrent, season, episode int) *models.TorrentResults {
 	genericTorrents := WrapEZTVTorrents(torrents)
-	return e.BaseTorrentService.ProcessTorrents(genericTorrents, "series", season, episode, "EZTV")
+	return e.BaseTorrentService.ProcessTorrents(genericTorrents, "series", season, episode, "EZTV", 0)
 }
 

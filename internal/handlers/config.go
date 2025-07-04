@@ -1,4 +1,4 @@
-package routes
+package handlers
 
 import (
 	"net/http"
@@ -6,19 +6,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func SetupConfigRoutes(r *gin.Engine) {
-	r.GET("/config", serveConfigPage)
-	r.GET("/:variables/configure", serveDynamicConfigPage)
-}
-
-func serveConfigPage(c *gin.Context) {
-	// Full interactive config page embedded (from original config.html)
+// handleConfig serves the configuration HTML page
+func (h *Handler) handleConfig(c *gin.Context) {
 	html := `<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Configuration Stremio Addon</title>
+  <title>Configuration GoStremioFR</title>
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
   <style>
     :root {
@@ -105,7 +100,7 @@ func serveConfigPage(c *gin.Context) {
           const decodedConfig = JSON.parse(atob(encodedConfig));
 
           document.getElementById('tmdb').value = decodedConfig.TMDB_API_KEY || "";
-          document.getElementById('files').value = decodedConfig.FILES_TO_SHOW || 2;
+          document.getElementById('files').value = decodedConfig.FILES_TO_SHOW || 10;
           document.getElementById('res').value = (decodedConfig.RES_TO_SHOW || []).join(",");
           document.getElementById('lang').value = (decodedConfig.LANG_TO_SHOW || []).join(",");
           document.getElementById('alldebrid').value = decodedConfig.API_KEY_ALLDEBRID || "";
@@ -119,8 +114,8 @@ func serveConfigPage(c *gin.Context) {
       const config = {
         TMDB_API_KEY: document.getElementById('tmdb').value,
         FILES_TO_SHOW: parseInt(document.getElementById('files').value),
-        RES_TO_SHOW: document.getElementById('res').value.split(',').map(s => s.trim()),
-        LANG_TO_SHOW: document.getElementById('lang').value.split(',').map(s => s.trim()),
+        RES_TO_SHOW: document.getElementById('res').value.split(',').map(s => s.trim()).filter(s => s),
+        LANG_TO_SHOW: document.getElementById('lang').value.split(',').map(s => s.trim()).filter(s => s),
         API_KEY_ALLDEBRID: document.getElementById('alldebrid').value,
       };
       const encodedConfig = btoa(JSON.stringify(config));
@@ -128,24 +123,24 @@ func serveConfigPage(c *gin.Context) {
       const protocol = window.location.protocol;
       const host = window.location.hostname;
       const port = window.location.port ? ':' + window.location.port : '';
-      const baseUrl = '' + protocol + '//' + host + port + '';
+      const baseUrl = protocol + '//' + host + port;
       
       document.getElementById('result').innerHTML = 
-        '<p><strong>Encoded Configuration (base64):</strong></p>' +
+        '<p><strong>Configuration encodée (base64):</strong></p>' +
         '<p>' + encodedConfig + '</p>' +
-        '<p><strong>Configuration Page Link:</strong></p>' +
+        '<p><strong>Lien de configuration:</strong></p>' +
         '<p>' +
           '<a href="' + baseUrl + '/' + encodedConfig + '/configure" target="_blank">' +
             baseUrl + '/' + encodedConfig + '/configure' +
           '</a>' +
         '</p>' +
-        '<p><strong>Manifest Link:</strong></p>' +
+        '<p><strong>Lien du manifest:</strong></p>' +
         '<p>' +
           '<a href="' + baseUrl + '/' + encodedConfig + '/manifest.json" target="_blank">' +
             baseUrl + '/' + encodedConfig + '/manifest.json' +
           '</a>' +
         '</p>' +
-        '<p><strong>Example Stream Link (movie):</strong></p>' +
+        '<p><strong>Exemple de lien stream (film):</strong></p>' +
         '<p>' +
           '<a href="' + baseUrl + '/' + encodedConfig + '/stream/movie/tt1234567.json" target="_blank">' +
             baseUrl + '/' + encodedConfig + '/stream/movie/tt1234567.json' +
@@ -158,23 +153,21 @@ func serveConfigPage(c *gin.Context) {
 </head>
 <body>
   <div class="container">
-    <h1>Configuration Addon</h1>
-    <label for="tmdb">TMDB API Key</label>
-    <input type="text" id="tmdb" placeholder="Entrez votre TMDB API Key">
+    <h1>Configuration GoStremioFR</h1>
+    <label for="tmdb">Clé API TMDB</label>
+    <input type="text" id="tmdb" placeholder="Entrez votre clé API TMDB">
     
-    <label for="files">Files to Show</label>
-    <input type="number" id="files" value="2">
+    <label for="files">Nombre de fichiers à afficher</label>
+    <input type="number" id="files" value="10" min="1" max="50">
     
-    <label for="res">Resolutions (séparées par une virgule)</label>
-    <input type="text" id="res" value="1080p">
+    <label for="res">Résolutions (séparées par une virgule)</label>
+    <input type="text" id="res" value="2160p,1080p,720p,480p" placeholder="Ex: 2160p,1080p,720p">
     
-    <label for="lang">Languages (séparés par une virgule)</label>
-    <input type="text" id="lang" value="MULTi,VOSTFR,FRENCH">
-
+    <label for="lang">Langues (séparées par une virgule)</label>
+    <input type="text" id="lang" value="MULTI,FRENCH,VOSTFR" placeholder="Ex: MULTI,FRENCH,VOSTFR">
     
-    <label for="alldebrid">AllDebrid API Key</label>
-    <input type="text" id="alldebrid" placeholder="Entrez votre AllDebrid API Key">
-
+    <label for="alldebrid">Clé API AllDebrid</label>
+    <input type="text" id="alldebrid" placeholder="Entrez votre clé API AllDebrid">
     
     <button onclick="generateConfig()">Générer la configuration</button>
     <div id="result" class="result"></div>
@@ -185,8 +178,8 @@ func serveConfigPage(c *gin.Context) {
 	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(html))
 }
 
-func serveDynamicConfigPage(c *gin.Context) {
-	// Just serve the same interactive page as /config
-	// The JavaScript will handle parsing the URL and populating the form
-	serveConfigPage(c)
+// handleConfigWithParams serves the config page with pre-filled values from URL
+func (h *Handler) handleConfigWithParams(c *gin.Context) {
+	// The JavaScript in the HTML will handle parsing the configuration from the URL
+	h.handleConfig(c)
 }

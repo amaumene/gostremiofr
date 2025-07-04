@@ -6,18 +6,19 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/amaumene/gostremiofr/internal/constants"
 	"github.com/amaumene/gostremiofr/internal/models"
 )
 
 func (h *Handler) handleManifest(c *gin.Context) {
 	manifest := models.Manifest{
-		ID:          "org.gostremiofr",
-		Version:     "1.0.0",
-		Name:        "GoStremio FR",
-		Description: "French torrent streaming addon",
+		ID:          constants.AddonID,
+		Version:     constants.AddonVersion,
+		Name:        constants.AddonName,
+		Description: constants.AddonDescription,
 		Types:       []string{"movie", "series"},
-		Resources:   []string{"stream"},
-		Catalogs:    []interface{}{},
+		Resources:   []string{"catalog", "meta", "stream"},
+		Catalogs:    h.getDefaultCatalogs(),
 		BehaviorHints: models.BehaviorHints{
 			Configurable: true,
 		},
@@ -35,17 +36,82 @@ func (h *Handler) handleManifestWithConfig(c *gin.Context) {
 	}
 	
 	manifest := models.Manifest{
-		ID:          "org.gostremiofr.configured",
-		Version:     "1.0.0",
-		Name:        "GoStremio FR (Configured)",
-		Description: "French torrent streaming addon with your configuration",
+		ID:          constants.AddonID,
+		Version:     constants.AddonVersion,
+		Name:        constants.AddonName,
+		Description: constants.AddonDescription,
 		Types:       []string{"movie", "series"},
-		Resources:   []string{"stream"},
-		Catalogs:    []interface{}{},
+		Resources:   []string{"catalog", "meta", "stream"},
+		Catalogs:    h.getDefaultCatalogs(),
 		BehaviorHints: models.BehaviorHints{
 			Configurable: true,
 		},
 	}
 	
 	c.JSON(http.StatusOK, manifest)
+}
+
+func (h *Handler) getDefaultCatalogs() []models.Catalog {
+	return []models.Catalog{
+		// Movie catalogs
+		{
+			Type: "movie",
+			ID:   "popular",
+			Name: "Films populaires",
+			Extra: []models.ExtraField{
+				{
+					Name: "genre",
+					Options: constants.TMDBMovieGenres,
+				},
+				{Name: "skip"},
+			},
+		},
+		{
+			Type: "movie",
+			ID:   "trending",
+			Name: "Films tendances",
+			Extra: []models.ExtraField{
+				{Name: "skip"},
+			},
+		},
+		{
+			Type: "movie",
+			ID:   "search",
+			Name: "Rechercher des films",
+			Extra: []models.ExtraField{
+				{Name: "search", IsRequired: true},
+				{Name: "skip"},
+			},
+		},
+		// Series catalogs
+		{
+			Type: "series",
+			ID:   "popular",
+			Name: "Séries populaires",
+			Extra: []models.ExtraField{
+				{
+					Name: "genre",
+					Options: constants.TMDBTVGenres,
+				},
+				{Name: "skip"},
+			},
+		},
+		{
+			Type: "series",
+			ID:   "trending",
+			Name: "Séries tendances",
+			Extra: []models.ExtraField{
+				{Name: "skip"},
+			},
+		},
+		{
+			Type: "series",
+			ID:   "search",
+			Name: "Rechercher des séries",
+			Extra: []models.ExtraField{
+				{Name: "search", IsRequired: true},
+				{Name: "skip"},
+			},
+		},
+	}
 }

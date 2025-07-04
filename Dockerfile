@@ -1,9 +1,6 @@
 # Build stage
 FROM golang:alpine AS builder
 
-# Install build dependencies
-RUN apk add --no-cache gcc musl-dev sqlite-dev git
-
 # Set working directory
 WORKDIR /app
 
@@ -17,7 +14,7 @@ RUN go mod init github.com/amaumene/gostremiofr
 RUN go mod tidy
 
 # Build the application with static linking
-RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -ldflags '-extldflags "-static"' -o gostremiofr ./cmd/gostremiofr
+RUN CGO_ENABLED=0 go build -a -installsuffix cgo -ldflags '-extldflags "-static"' -o gostremiofr ./cmd/gostremiofr
 
 # Runtime stage
 FROM scratch
@@ -37,6 +34,7 @@ EXPOSE 5000
 # Set environment variables
 ENV PORT=5000
 ENV LOG_LEVEL=info
+ENV USE_SSL=false
 # DATABASE_PATH can be set to customize database location (default: ./streams.db)
 # ENV DATABASE_PATH=/data/streams.db
 

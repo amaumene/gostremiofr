@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/amaumene/gostremiofr/internal/constants"
 	"github.com/amaumene/gostremiofr/internal/models"
 	"github.com/amaumene/gostremiofr/pkg/alldebrid"
 	"github.com/amaumene/gostremiofr/pkg/logger"
@@ -31,7 +32,7 @@ func NewAllDebrid(apiKey string) *AllDebrid {
 	
 	return &AllDebrid{
 		apiKey:      sanitizedKey,
-		rateLimiter: ratelimiter.NewTokenBucket(15, 3),
+		rateLimiter: ratelimiter.NewTokenBucket(constants.AllDebridRateLimit, constants.AllDebridRateBurst),
 		client:      alldebrid.NewClient(),
 		logger:      logger.New(),
 		validator:   validator,
@@ -72,15 +73,19 @@ func (a *AllDebrid) CheckMagnets(magnets []models.MagnetInfo, apiKey string) ([]
 		formData.Add("magnets[]", hash)
 	}
 	
-	a.logger.Debugf("[AllDebrid] checking %d specific magnets (API key: %s)", len(hashes), a.validator.MaskAPIKey(apiKey))
+	a.logger.Infof("[AllDebrid] checking %d specific magnets (API key: %s)", len(hashes), a.validator.MaskAPIKey(apiKey))
+	a.logger.Infof("[AllDebrid] making POST request to %s", requestURL)
 	
-	// Use a standard HTTP client for this manual API call
-	httpClient := &http.Client{Timeout: 30 * time.Second}
+	// Use a standard HTTP client for this manual API call with longer timeout
+	httpClient := &http.Client{Timeout: 60 * time.Second}
 	
+	a.logger.Infof("[AllDebrid] sending POST request...")
 	resp, err := httpClient.PostForm(requestURL, formData)
 	if err != nil {
+		a.logger.Errorf("[AllDebrid] POST request failed: %v", err)
 		return nil, fmt.Errorf("failed to check magnets: %w", err)
 	}
+	a.logger.Infof("[AllDebrid] received HTTP response with status: %s", resp.Status)
 	defer resp.Body.Close()
 	
 	// Parse the response manually since we're using the direct API

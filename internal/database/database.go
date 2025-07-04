@@ -7,9 +7,17 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
-
-	_ "github.com/mattn/go-sqlite3"
 )
+
+// Database interface for abstracting different database implementations
+type Database interface {
+	Close() error
+	GetCachedTMDB(imdbId string) (*TMDBCache, error)
+	StoreTMDBCache(cache *TMDBCache) error
+	StoreMagnet(magnet *Magnet) error
+	GetMagnets() ([]Magnet, error)
+	DeleteMagnet(id string) error
+}
 
 type DB struct {
 	conn *sql.DB
@@ -23,11 +31,11 @@ type DB struct {
 }
 
 type TMDBCache struct {
-	IMDBId      string    `json:"imdb_id"`
-	Type        string    `json:"type"`
-	Title       string    `json:"title"`
-	FrenchTitle string    `json:"french_title"`
-	CreatedAt   time.Time `json:"created_at"`
+	IMDBId    string    `json:"imdb_id"`
+	Type      string    `json:"type"`
+	Title     string    `json:"title"`
+	Year      int       `json:"year"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type Magnet struct {
@@ -100,7 +108,7 @@ func (db *DB) createTables() error {
 		imdb_id TEXT PRIMARY KEY,
 		type TEXT,
 		title TEXT,
-		french_title TEXT,
+		year INTEGER DEFAULT 0,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	)`
 
@@ -131,18 +139,22 @@ func (db *DB) createTables() error {
 		return fmt.Errorf("failed to create magnets index: %w", err)
 	}
 
+	// Migration: Add year column if it doesn't exist
+	migrationSQL := `ALTER TABLE tmdb_cache ADD COLUMN year INTEGER DEFAULT 0`
+	db.conn.Exec(migrationSQL) // Ignore error if column already exists
+
 	return nil
 }
 
 func (db *DB) prepareStatements() error {
 	var err error
 	
-	db.stmtGetTMDB, err = db.conn.Prepare("SELECT type, title, french_title FROM tmdb_cache WHERE imdb_id = ?")
+	db.stmtGetTMDB, err = db.conn.Prepare("SELECT type, title, year FROM tmdb_cache WHERE imdb_id = ?")
 	if err != nil {
 		return fmt.Errorf("failed to prepare get TMDB statement: %w", err)
 	}
 	
-	db.stmtStoreTMDB, err = db.conn.Prepare("INSERT OR REPLACE INTO tmdb_cache (imdb_id, type, title, french_title) VALUES (?, ?, ?, ?)")
+	db.stmtStoreTMDB, err = db.conn.Prepare("INSERT OR REPLACE INTO tmdb_cache (imdb_id, type, title, year) VALUES (?, ?, ?, ?)")
 	if err != nil {
 		return fmt.Errorf("failed to prepare store TMDB statement: %w", err)
 	}
@@ -172,7 +184,7 @@ func (db *DB) GetCachedTMDB(imdbId string) (*TMDBCache, error) {
 	var cache TMDBCache
 	cache.IMDBId = imdbId
 	
-	err := db.stmtGetTMDB.QueryRow(imdbId).Scan(&cache.Type, &cache.Title, &cache.FrenchTitle)
+	err := db.stmtGetTMDB.QueryRow(imdbId).Scan(&cache.Type, &cache.Title, &cache.Year)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -187,7 +199,7 @@ func (db *DB) StoreTMDBCache(cache *TMDBCache) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	
-	_, err := db.stmtStoreTMDB.Exec(cache.IMDBId, cache.Type, cache.Title, cache.FrenchTitle)
+	_, err := db.stmtStoreTMDB.Exec(cache.IMDBId, cache.Type, cache.Title, cache.Year)
 	if err != nil {
 		return fmt.Errorf("failed to store TMDB cache: %w", err)
 	}
@@ -207,7 +219,7 @@ func (db *DB) StoreMagnet(magnet *Magnet) error {
 	return nil
 }
 
-func (db *DB) GetAllMagnets() ([]Magnet, error) {
+func (db *DB) GetMagnets() ([]Magnet, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 	

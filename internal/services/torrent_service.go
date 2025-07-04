@@ -63,14 +63,14 @@ type GenericTorrent interface {
 
 type BaseTorrentService struct {
 	config      *config.Config
-	db          *database.DB
+	db          database.Database
 	cache       *cache.LRUCache
 	rateLimiter *ratelimiter.TokenBucket
 	httpClient  *http.Client
 	logger      logger.Logger
 }
 
-func NewBaseTorrentService(db *database.DB, cache *cache.LRUCache, rateLimit int, burstLimit int) *BaseTorrentService {
+func NewBaseTorrentService(db database.Database, cache *cache.LRUCache, rateLimit int, burstLimit int) *BaseTorrentService {
 	initParseRegexPatterns()
 	return &BaseTorrentService{
 		db:          db,
@@ -85,6 +85,49 @@ func NewBaseTorrentService(db *database.DB, cache *cache.LRUCache, rateLimit int
 
 func (b *BaseTorrentService) SetConfig(cfg *config.Config) {
 	b.config = cfg
+}
+
+// Generic caching methods for any torrent provider
+func (b *BaseTorrentService) GetCachedSearch(provider, query, category string, season, episode int) (*models.TorrentResults, bool) {
+	cacheKey := fmt.Sprintf("torrent_search_%s_%s_%s_%d_%d", provider, query, category, season, episode)
+	if cached, found := b.cache.Get(cacheKey); found {
+		if result, ok := cached.(*models.TorrentResults); ok {
+			b.logger.Infof("[%s] cache hit for query: %s (%d movies, %d series, %d seasons, %d episodes)", 
+				provider, query, len(result.MovieTorrents), len(result.CompleteSeriesTorrents), 
+				len(result.CompleteSeasonTorrents), len(result.EpisodeTorrents))
+			return result, true
+		}
+	}
+	b.logger.Infof("[%s] cache miss, will fetch from API for query: %s", provider, query)
+	return nil, false
+}
+
+func (b *BaseTorrentService) CacheSearch(provider, query, category string, season, episode int, result *models.TorrentResults) {
+	cacheKey := fmt.Sprintf("torrent_search_%s_%s_%s_%d_%d", provider, query, category, season, episode)
+	b.cache.Set(cacheKey, result)
+	b.logger.Infof("[%s] cached result for query: %s (%d movies, %d series, %d seasons, %d episodes)", 
+		provider, query, len(result.MovieTorrents), len(result.CompleteSeriesTorrents), 
+		len(result.CompleteSeasonTorrents), len(result.EpisodeTorrents))
+}
+
+func (b *BaseTorrentService) GetCachedHash(provider, torrentID string) (string, bool) {
+	cacheKey := fmt.Sprintf("torrent_hash_%s_%s", provider, torrentID)
+	if cached, found := b.cache.Get(cacheKey); found {
+		if hash, ok := cached.(string); ok && hash != "" {
+			b.logger.Debugf("[%s] cache hit for torrent hash %s: %s", provider, torrentID, hash)
+			return hash, true
+		}
+	}
+	b.logger.Debugf("[%s] cache miss for hash, will fetch from API for torrent ID %s", provider, torrentID)
+	return "", false
+}
+
+func (b *BaseTorrentService) CacheHash(provider, torrentID, hash string) {
+	if hash != "" {
+		cacheKey := fmt.Sprintf("torrent_hash_%s_%s", provider, torrentID)
+		b.cache.Set(cacheKey, hash)
+		b.logger.Debugf("[%s] cached hash for torrent %s: %s", provider, torrentID, hash)
+	}
 }
 
 func (b *BaseTorrentService) ParseFileName(fileName string) models.ParsedFileName {
@@ -130,13 +173,18 @@ func (b *BaseTorrentService) GetTorrentPriority(title string) models.Priority {
 		}
 	}
 
-	// Language priority
-	if strings.Contains(titleLower, "multi") {
-		priority.Language = 3
-	} else if strings.Contains(titleLower, "french") || strings.Contains(titleLower, "vff") || strings.Contains(titleLower, "truefrench") {
-		priority.Language = 2
+	// Language priority based on user-specified order
+	if b.config != nil {
+		priority.Language = b.config.GetLanguagePriority(title)
 	} else {
-		priority.Language = 1
+		// Fallback to default priority if no config
+		if strings.Contains(titleLower, "multi") {
+			priority.Language = 3
+		} else if strings.Contains(titleLower, "french") || strings.Contains(titleLower, "vff") || strings.Contains(titleLower, "truefrench") {
+			priority.Language = 2
+		} else {
+			priority.Language = 1
+		}
 	}
 
 
@@ -191,18 +239,48 @@ func (b *BaseTorrentService) ContainsLanguage(title, language string) bool {
 	langLower := strings.ToLower(language)
 
 	switch langLower {
-	case "multi":
+	case "multi", "multi_fr":
 		return strings.Contains(titleLower, "multi")
-	case "french":
+	case "french", "vf", "vff":
 		return strings.Contains(titleLower, "french") ||
 			strings.Contains(titleLower, "vff") ||
+			strings.Contains(titleLower, "vf") ||
 			strings.Contains(titleLower, "truefrench")
+	case "vo":
+		return strings.Contains(titleLower, "vo") ||
+			strings.Contains(titleLower, "vostfr") ||
+			strings.Contains(titleLower, "english") ||
+			(!strings.Contains(titleLower, "vf") && !strings.Contains(titleLower, "french") && !strings.Contains(titleLower, "multi"))
 	case "english":
 		return strings.Contains(titleLower, "english") ||
 			strings.Contains(titleLower, "vostfr")
+	case "vostfr":
+		return strings.Contains(titleLower, "vostfr")
 	default:
 		return strings.Contains(titleLower, langLower)
 	}
+}
+
+func (b *BaseTorrentService) MatchesYear(title string, expectedYear int) bool {
+	if expectedYear == 0 {
+		return true // If no year provided, don't filter
+	}
+	
+	// Look for 4-digit year patterns in the title
+	yearPattern := regexp.MustCompile(`\b(19|20)\d{2}\b`)
+	matches := yearPattern.FindAllString(title, -1)
+	
+	for _, match := range matches {
+		if year, err := strconv.Atoi(match); err == nil {
+			// Allow some flexibility: exact year or within 1 year
+			if year == expectedYear || year == expectedYear-1 || year == expectedYear+1 {
+				return true
+			}
+		}
+	}
+	
+	// If no year found in title, allow it (some torrents don't include year)
+	return len(matches) == 0
 }
 
 func (b *BaseTorrentService) MatchesEpisode(title string, season, episode int) bool {
@@ -354,7 +432,7 @@ func ClassifyTorrent(title string, mediaType string, season, episode int, base *
 }
 
 // Generic torrent processing function
-func (b *BaseTorrentService) ProcessTorrents(torrents []GenericTorrent, mediaType string, season, episode int, serviceName string) *models.TorrentResults {
+func (b *BaseTorrentService) ProcessTorrents(torrents []GenericTorrent, mediaType string, season, episode int, serviceName string, year int) *models.TorrentResults {
 	results := &models.TorrentResults{}
 	logger := logger.New()
 
@@ -364,6 +442,12 @@ func (b *BaseTorrentService) ProcessTorrents(torrents []GenericTorrent, mediaTyp
 		// First filter: language only
 		if !b.MatchesLanguageFilter(torrent.GetTitle(), torrent.GetLanguage()) {
 			logger.Debugf("[%s] torrent filtered by language - title: %s", serviceName, torrent.GetTitle())
+			continue
+		}
+
+		// Second filter: year matching for movies
+		if mediaType == "movie" && !b.MatchesYear(torrent.GetTitle(), year) {
+			logger.Debugf("[%s] torrent filtered by year - title: %s (expected: %d)", serviceName, torrent.GetTitle(), year)
 			continue
 		}
 
@@ -420,7 +504,7 @@ func (b *BaseTorrentService) ProcessTorrents(torrents []GenericTorrent, mediaTyp
 
 		logger.Debugf("[%s] torrent classification result - title: '%s', type: %s", serviceName, torrent.GetTitle(), classification)
 
-		// Second filter: resolution (after classification)
+		// Third filter: resolution (after classification)
 		if !b.MatchesResolutionFilter(torrent.GetTitle()) {
 			logger.Debugf("[%s] torrent filtered by resolution after classification - title: %s", serviceName, torrent.GetTitle())
 			continue

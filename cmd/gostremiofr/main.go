@@ -9,7 +9,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/amaumene/gostremiofr/pkg/routes"
+	"github.com/amaumene/gostremiofr/internal/constants"
+	"github.com/amaumene/gostremiofr/pkg/ssl"
 )
 
 // GzipResponseWriter wraps gin.ResponseWriter to provide gzip compression
@@ -63,6 +64,12 @@ func main() {
 	// Initialize services
 	InitializeServices()
 
+	// Set Gin mode based on environment
+	if os.Getenv("GIN_MODE") == "" {
+		// Default to release mode if not specified
+		gin.SetMode(gin.ReleaseMode)
+	}
+
 	// Create Gin router
 	r := gin.Default()
 
@@ -84,18 +91,41 @@ func main() {
 		}
 	}()
 
-	// Routes
-	routes.SetupConfigRoutes(r)
-	routes.SetupManifestRoutes(r)
-	routes.SetupStreamRoutes(r, handler)
+	// Register all routes through the handler
+	handler.RegisterRoutes(r)
 
-	// Get port from environment or default to 5000
+	// Get port from environment or default
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "5000"
+		port = constants.DefaultPort
 	}
 
-	// Start HTTP server
-	Logger.Infof("[App] starting HTTP server on port %s", port)
-	log.Fatal(http.ListenAndServe(":"+port, r))
+	// Check if SSL is enabled
+	useSSL := strings.ToLower(os.Getenv("USE_SSL")) == "true"
+	
+	if useSSL {
+		// Setup SSL certificate from local-ip.sh
+		sslManager := ssl.NewLocalIPCertificate(Logger)
+		if err := sslManager.Setup(); err != nil {
+			Logger.Errorf("[App] failed to setup SSL: %v", err)
+			Logger.Infof("[App] falling back to HTTP")
+			useSSL = false
+		} else {
+			// Get certificate paths
+			certPath, keyPath := sslManager.GetCertificatePaths()
+			hostname := sslManager.GetHostname()
+			
+			Logger.Infof("[App] starting HTTPS server on port %s", port)
+			Logger.Infof("[App] accessible at https://%s:%s", hostname, port)
+			
+			// Start HTTPS server
+			log.Fatal(http.ListenAndServeTLS(":"+port, certPath, keyPath, r))
+		}
+	}
+	
+	if !useSSL {
+		// Start HTTP server
+		Logger.Infof("[App] starting HTTP server on port %s", port)
+		log.Fatal(http.ListenAndServe(":"+port, r))
+	}
 }

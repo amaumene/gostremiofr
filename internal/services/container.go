@@ -14,12 +14,17 @@ type Container struct {
 	YGG       YGGService
 	EZTV      EZTVService
 	Cache     *cache.LRUCache
-	DB        *database.DB
+	DB        database.Database
 	Logger    logger.Logger
 }
 
 type TMDBService interface {
-	GetIMDBInfo(imdbID string) (string, string, string, error)
+	GetIMDBInfo(imdbID string) (string, string, string, int, error)
+	GetPopularMovies(page int, genreID string) ([]models.Meta, error)
+	GetPopularSeries(page int, genreID string) ([]models.Meta, error)
+	GetTrending(mediaType string, timeWindow string, page int) ([]models.Meta, error)
+	SearchMulti(query string, page int) ([]models.Meta, error)
+	GetMetadata(mediaType, tmdbID string) (*models.Meta, error)
 }
 
 type AllDebridService interface {
@@ -32,6 +37,7 @@ type AllDebridService interface {
 type YGGService interface {
 	SearchTorrents(query string, category string, season, episode int) (*models.TorrentResults, error)
 	GetTorrentHash(torrentID string) (string, error)
+	SetConfig(cfg *config.Config)
 }
 
 type EZTVService interface {

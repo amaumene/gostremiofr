@@ -7,15 +7,17 @@ A high-performance Stremio addon for French content, written in Go. This addon i
 - 🚀 **High Performance**: Built with Go for optimal speed and low resource usage
 - 🔍 **Multiple Torrent Providers**: Supports YGG and EZTV torrent sources
 - 🎬 **TMDB Integration**: Automatic metadata enrichment with French titles
-- 💾 **Smart Caching**: Built-in LRU cache and SQLite database for faster responses
+- 📚 **Built-in Catalogs**: Self-sufficient with popular, trending, and search catalogs
+- 📺 **Full Series Support**: Complete episode listings with season/episode metadata
+- 💾 **Smart Caching**: Built-in LRU cache and BoltHold database for faster responses
 - 🔐 **Secure API Handling**: Sanitized and validated API keys with masked logging
 - 🌐 **AllDebrid Integration**: Stream torrents through AllDebrid for better performance
 - 📊 **Intelligent Sorting**: Prioritizes streams by resolution, language, and availability
+- 🇫🇷 **French-Focused**: Catalogs and metadata optimized for French content
 
 ## Prerequisites
 
 - Go 1.21 or higher
-- SQLite3
 - AllDebrid account (for streaming)
 - TMDB API key (optional, for metadata)
 
@@ -44,7 +46,8 @@ docker build -t gostremiofr .
 # Run the container
 docker run -p 5001:5001 \
   -e LOG_LEVEL=info \
-  -e DATABASE_PATH=/data/streams.db \
+  -e DATABASE_DIR=/data \
+  -e USE_SSL=false \
   -v gostremiofr-data:/data \
   gostremiofr
 ```
@@ -56,14 +59,19 @@ docker run -p 5001:5001 \
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `LOG_LEVEL` | Logging level (debug, info, warn, error) | `info` |
-| `DATABASE_PATH` | Path to SQLite database | `./streams.db` |
+| `DATABASE_DIR` | Directory for BoltHold database | `.` |
 | `PORT` | Server port | `5001` |
 | `TMDB_API_KEY` | TMDB API key for metadata | - |
 | `API_KEY_ALLDEBRID` | Default AllDebrid API key | - |
+| `USE_SSL` | Enable SSL using local-ip.sh certificates | `false` |
+| `GIN_MODE` | Gin framework mode (debug, release, test) | `release` |
 
 ### Configuration via Web Interface
 
-1. Navigate to `http://localhost:5001/config`
+1. Navigate to:
+   - HTTP: `http://localhost:5001/config`
+   - HTTPS (if USE_SSL=true): `https://[your-ip-with-dashes].local-ip.sh:5001/config`
+
 2. Enter your configuration:
    - **TMDB API Key**: For movie/series metadata
    - **Files to Show**: Number of streams to display (default: 6)
@@ -88,6 +96,8 @@ docker run -p 5001:5001 \
 
 - `GET /config` - Configuration interface
 - `GET /{config}/manifest.json` - Addon manifest
+- `GET /{config}/catalog/{type}/{id}.json` - Browse catalogs (popular, trending, search)
+- `GET /{config}/meta/{type}/{id}.json` - Get detailed metadata
 - `GET /{config}/stream/{type}/{id}.json` - Stream endpoint
 - `GET /health` - Health check endpoint
 
@@ -133,7 +143,7 @@ gostremiofr/
   - `EZTV`: Searches EZTV for TV series
   - `TMDB`: Fetches movie/series metadata
   - `AllDebrid`: Manages torrent downloads and streaming
-- **Cache**: LRU memory cache + SQLite for persistence
+- **Cache**: LRU memory cache + BoltHold embedded database for persistence
 - **Security**: API key validation and sanitization
 
 ## Development
@@ -196,6 +206,33 @@ Set the log level using the `LOG_LEVEL` environment variable.
 - All external inputs are validated
 - API keys are transmitted securely (POST requests where possible)
 
+### SSL/HTTPS Support
+
+GoStremioFR supports automatic SSL certificate provisioning using [local-ip.sh](https://local-ip.sh):
+
+1. **Enable SSL**: Set `USE_SSL=true` environment variable
+2. **Automatic Setup**: The server will:
+   - Detect your local IP address
+   - Download a valid SSL certificate from local-ip.sh
+   - Configure HTTPS automatically
+3. **Access**: Your addon will be available at `https://[your-ip-with-dashes].local-ip.sh:5001`
+
+Example:
+```bash
+# Run with SSL enabled
+USE_SSL=true ./gostremiofr
+
+# The server will display something like:
+# [App] starting HTTPS server on port 5001
+# [App] accessible at https://192-168-1-100.local-ip.sh:5001
+```
+
+Benefits:
+- Valid SSL certificates without configuration
+- Works on local networks
+- Automatically renewed certificates
+- No certificate warnings in browsers
+
 ## Troubleshooting
 
 ### Common Issues
@@ -211,8 +248,9 @@ Set the log level using the `LOG_LEVEL` environment variable.
    - Consider increasing cache size
 
 3. **Database errors**
-   - Ensure write permissions for database directory
+   - Ensure write permissions for database directory (`DATABASE_DIR`)
    - Check disk space availability
+   - BoltHold database file will be created as `data.db` in the specified directory
 
 ### Debug Mode
 

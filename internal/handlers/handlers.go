@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	"github.com/amaumene/gostremiofr/internal/config"
 	"github.com/amaumene/gostremiofr/internal/services"
@@ -19,12 +21,27 @@ func New(services *services.Container, config *config.Config) *Handler {
 }
 
 func (h *Handler) RegisterRoutes(r *gin.Engine) {
+	// Home route
 	r.GET("/", h.handleHome)
-	r.GET("/configure", h.handleConfigure)
-	r.GET("/:configuration/configure", h.handleConfigureWithParams)
+	
+	// Configuration routes
+	r.GET("/config", h.handleConfig)
+	r.GET("/configure", h.handleConfig) // Alias for compatibility
+	r.GET("/:configuration/configure", h.handleConfigWithParams)
+	
+	// Manifest routes
 	r.GET("/manifest.json", h.handleManifest)
 	r.GET("/:configuration/manifest.json", h.handleManifestWithConfig)
-	r.GET("/:configuration/stream/:type/:id.json", h.handleStream)
+	
+	// Catalog routes - handle both with and without .json in the handler
+	r.GET("/:configuration/catalog/:type/:id", h.handleCatalogWrapper)
+	r.GET("/:configuration/catalog/:type/:id/*extra", h.handleCatalogWrapper)
+	
+	// Meta routes - handle both with and without .json in the handler
+	r.GET("/:configuration/meta/:type/:id", h.handleMetaWrapper)
+	
+	// Stream routes - handle both with and without .json in the handler
+	r.GET("/:configuration/stream/:type/:id", h.handleStreamWrapper)
 }
 
 // HandleStream is an exported wrapper for the internal handleStream method
@@ -33,17 +50,69 @@ func (h *Handler) HandleStream(c *gin.Context) {
 }
 
 func (h *Handler) handleHome(c *gin.Context) {
-	c.String(200, "Welcome to GoStremio addon!")
+	c.String(200, "Welcome to GoStremioFR! Visit /config to configure the addon.")
 }
 
-func (h *Handler) handleConfigure(c *gin.Context) {
-	c.Redirect(302, "/configure")
+// Wrapper functions to handle .json extension
+func (h *Handler) handleCatalogWrapper(c *gin.Context) {
+	// Strip .json extension from ID if present
+	id := c.Param("id")
+	if strings.HasSuffix(id, ".json") {
+		c.Params = append(c.Params[:len(c.Params)-1], gin.Param{
+			Key:   "id",
+			Value: strings.TrimSuffix(id, ".json"),
+		})
+	}
+	
+	// Handle extra path parameters (e.g., /catalog/movie/search/search=term.json)
+	extra := c.Param("extra")
+	if extra != "" {
+		// Remove leading slash
+		extra = strings.TrimPrefix(extra, "/")
+		// Remove .json extension if present
+		extra = strings.TrimSuffix(extra, ".json")
+		
+		// Parse path-based parameters (e.g., "search=term&genre=28")
+		params := strings.Split(extra, "&")
+		for _, param := range params {
+			parts := strings.SplitN(param, "=", 2)
+			if len(parts) == 2 {
+				key := parts[0]
+				value := parts[1]
+				// Add as query parameter so the handler can access it via c.Query()
+				c.Request.URL.RawQuery = c.Request.URL.RawQuery + "&" + key + "=" + value
+			}
+		}
+		
+		// Clean up the query string
+		if strings.HasPrefix(c.Request.URL.RawQuery, "&") {
+			c.Request.URL.RawQuery = strings.TrimPrefix(c.Request.URL.RawQuery, "&")
+		}
+	}
+	
+	h.handleCatalog(c)
 }
 
-func (h *Handler) handleConfigureWithParams(c *gin.Context) {
-	configuration := c.Param("configuration")
-	c.JSON(200, gin.H{
-		"configuration": configuration,
-		"message": "Configuration received",
-	})
+func (h *Handler) handleMetaWrapper(c *gin.Context) {
+	// Strip .json extension from ID if present
+	id := c.Param("id")
+	if strings.HasSuffix(id, ".json") {
+		c.Params = append(c.Params[:len(c.Params)-1], gin.Param{
+			Key:   "id",
+			Value: strings.TrimSuffix(id, ".json"),
+		})
+	}
+	h.handleMeta(c)
+}
+
+func (h *Handler) handleStreamWrapper(c *gin.Context) {
+	// Strip .json extension from ID if present
+	id := c.Param("id")
+	if strings.HasSuffix(id, ".json") {
+		c.Params = append(c.Params[:len(c.Params)-1], gin.Param{
+			Key:   "id",
+			Value: strings.TrimSuffix(id, ".json"),
+		})
+	}
+	h.handleStream(c)
 }

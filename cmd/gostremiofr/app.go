@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 
 var (
 	Logger          logger.Logger
-	DB              *database.DB
+	DB              database.Database
 	tmdbMemoryCache *cache.LRUCache
 	handler         *handlers.Handler
 )
@@ -40,18 +41,19 @@ func InitializeLogger() {
 func InitializeDatabase() {
 	var err error
 	
-	// Get database path from environment variable, default to current directory
-	dbPath := os.Getenv("DATABASE_PATH")
-	if dbPath == "" {
-		dbPath = "./streams.db"
+	// Get database directory from environment variable, default to current directory
+	dbDir := os.Getenv("DATABASE_DIR")
+	if dbDir == "" {
+		dbDir = "."
 	}
+	dbPath := filepath.Join(dbDir, "data.db")
 
-	DB, err = database.New(dbPath)
+	DB, err = database.NewBolt(dbPath)
 	if err != nil {
 		Logger.Fatalf("failed to initialize database: %v", err)
 	}
 
-	Logger.Infof("[App] database initialized successfully")
+	Logger.Infof("[App] BoltHold database initialized successfully")
 }
 
 func InitializeServices() {
@@ -60,7 +62,7 @@ func InitializeServices() {
 
 	// Initialize services
 	tmdbService := services.NewTMDB("", tmdbMemoryCache) // empty API key for now
-	yggService := services.NewYGG(DB, tmdbMemoryCache)
+	yggService := services.NewYGG(DB, tmdbMemoryCache, tmdbService)
 	eztvService := services.NewEZTV(DB, tmdbMemoryCache)
 	allDebridService := services.NewAllDebrid("")  // empty API key for now
 	

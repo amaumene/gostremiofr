@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/amaumene/gostremiofr/internal/constants"
 )
 
 type Config struct {
@@ -27,9 +29,9 @@ type Config struct {
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		FilesToShow:  10,
-		CacheSize:    1000,
-		CacheTTL:     1 * time.Hour,
+		FilesToShow:  constants.DefaultFilesToShow,
+		CacheSize:    constants.DefaultCacheSize,
+		CacheTTL:     time.Duration(constants.DefaultCacheTTL) * time.Hour,
 		DatabasePath: getEnvOrDefault("DATABASE_PATH", "./cache.db"),
 	}
 	
@@ -66,15 +68,15 @@ func (c *Config) Validate() error {
 	// TMDB_API_KEY is now optional, configured via web interface
 	
 	if c.FilesToShow <= 0 {
-		c.FilesToShow = 10
+		c.FilesToShow = constants.DefaultFilesToShow
 	}
 	
 	if len(c.ResToShow) == 0 {
-		c.ResToShow = []string{"4k", "1080p", "720p"}
+		c.ResToShow = constants.DefaultResolutions
 	}
 	
 	if len(c.LangToShow) == 0 {
-		c.LangToShow = []string{"multi", "french", "english"}
+		c.LangToShow = constants.DefaultLanguages
 	}
 	
 	
@@ -114,11 +116,56 @@ func (c *Config) GetResolutionPriority(res string) int {
 	return 0 // Not in list = lowest priority
 }
 
+func (c *Config) GetLanguagePriority(title string) int {
+	titleLower := strings.ToLower(title)
+	
+	// Check each configured language in order of preference
+	for i, lang := range c.LangToShow {
+		langLower := strings.ToLower(lang)
+		
+		switch langLower {
+		case "multi", "multi_fr":
+			if strings.Contains(titleLower, "multi") {
+				return len(c.LangToShow) - i
+			}
+		case "french", "vf", "vff":
+			if strings.Contains(titleLower, "french") ||
+				strings.Contains(titleLower, "vff") ||
+				strings.Contains(titleLower, "vf") ||
+				strings.Contains(titleLower, "truefrench") {
+				return len(c.LangToShow) - i
+			}
+		case "vo":
+			if strings.Contains(titleLower, "vo") ||
+				strings.Contains(titleLower, "vostfr") ||
+				strings.Contains(titleLower, "english") ||
+				(!strings.Contains(titleLower, "vf") && !strings.Contains(titleLower, "french") && !strings.Contains(titleLower, "multi")) {
+				return len(c.LangToShow) - i
+			}
+		case "english":
+			if strings.Contains(titleLower, "english") ||
+				strings.Contains(titleLower, "vostfr") {
+				return len(c.LangToShow) - i
+			}
+		case "vostfr":
+			if strings.Contains(titleLower, "vostfr") {
+				return len(c.LangToShow) - i
+			}
+		default:
+			if strings.Contains(titleLower, langLower) {
+				return len(c.LangToShow) - i
+			}
+		}
+	}
+	
+	return 0 // Not in list = lowest priority
+}
+
 
 // CreateFromUserData creates a config from user-provided data and existing config
 func CreateFromUserData(userConfig map[string]interface{}, baseConfig *Config) *Config {
 	cfg := &Config{
-		FilesToShow: 6, // Default from user config
+		FilesToShow: constants.DefaultFilesToShow,
 	}
 	
 	// Copy from existing config if available
