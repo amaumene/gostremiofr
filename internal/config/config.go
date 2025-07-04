@@ -12,11 +12,12 @@ import (
 )
 
 type Config struct {
-	TMDBAPIKey       string   `json:"TMDB_API_KEY"`
-	APIKeyAllDebrid  string   `json:"API_KEY_ALLDEBRID"`
-	FilesToShow      int      `json:"FILES_TO_SHOW"`
-	ResToShow        []string `json:"RES_TO_SHOW"`
-	LangToShow       []string `json:"LANG_TO_SHOW"`
+	TMDBAPIKey       string            `json:"TMDB_API_KEY"`
+	APIKeyAllDebrid  string            `json:"API_KEY_ALLDEBRID"`
+	FilesToShow      int               `json:"FILES_TO_SHOW"`
+	ResToShow        []string          `json:"RES_TO_SHOW"`
+	LangToShow       []string          `json:"LANG_TO_SHOW"`
+	ProviderDebrid   map[string]string `json:"PROVIDER_DEBRID,omitempty"` // provider -> debrid service mapping
 	
 	DatabasePath string        `json:"DATABASE_PATH"`
 	CacheSize    int           `json:"CACHE_SIZE"`
@@ -161,6 +162,17 @@ func (c *Config) GetLanguagePriority(title string) int {
 	return 0 // Not in list = lowest priority
 }
 
+// GetDebridForProvider returns the debrid service configured for a specific provider
+// Falls back to AllDebrid if no specific configuration exists
+func (c *Config) GetDebridForProvider(provider string) string {
+	if c.ProviderDebrid != nil {
+		if debrid, ok := c.ProviderDebrid[strings.ToLower(provider)]; ok && debrid != "" {
+			return debrid
+		}
+	}
+	// Default to AllDebrid
+	return "alldebrid"
+}
 
 // CreateFromUserData creates a config from user-provided data and existing config
 func CreateFromUserData(userConfig map[string]interface{}, baseConfig *Config) *Config {
@@ -211,6 +223,17 @@ func CreateFromUserData(userConfig map[string]interface{}, baseConfig *Config) *
 	if val, ok := userConfig["API_KEY_ALLDEBRID"]; ok {
 		if str, ok := val.(string); ok {
 			cfg.APIKeyAllDebrid = str
+		}
+	}
+	
+	if val, ok := userConfig["PROVIDER_DEBRID"]; ok {
+		if providerMap, ok := val.(map[string]interface{}); ok {
+			cfg.ProviderDebrid = make(map[string]string)
+			for provider, debrid := range providerMap {
+				if debridStr, ok := debrid.(string); ok {
+					cfg.ProviderDebrid[strings.ToLower(provider)] = debridStr
+				}
+			}
 		}
 	}
 	

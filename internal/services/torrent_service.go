@@ -316,18 +316,28 @@ func (b *BaseTorrentService) MatchesSeason(title string, season int) bool {
 		return false
 	}
 
+	logger := logger.New()
+	logger.Debugf("[TorrentService] checking if '%s' matches season %d", title, season)
+
 	patterns := []string{
-		fmt.Sprintf(`(?i)s%02d(?:[^e]|$)`, season),               // season without episode
-		fmt.Sprintf(`(?i)season\s*%d(?:[^e]|\s*[^e]|$)`, season), // season without episode word
-		fmt.Sprintf(`(?i)saison\s*%d`, season),
+		fmt.Sprintf(`(?i)s%02d(?:[^e]|$)`, season),                    // S04 but not S04E01
+		fmt.Sprintf(`(?i)s%d(?:[^e]|$)`, season),                     // S4 but not S4E1
+		fmt.Sprintf(`(?i)season\s*%d(?:[^e]|\s*[^e]|$)`, season),     // Season 4
+		fmt.Sprintf(`(?i)saison\s*%d`, season),                       // Saison 4 (French)
+		fmt.Sprintf(`(?i)complete.*s%02d`, season),                   // Complete S04
+		fmt.Sprintf(`(?i)complete.*season\s*%d`, season),             // Complete Season 4
+		fmt.Sprintf(`(?i)s%02d.*complete`, season),                   // S04 Complete
+		fmt.Sprintf(`(?i)season\s*%d.*complete`, season),             // Season 4 Complete
 	}
 
 	for _, pattern := range patterns {
 		if matched, _ := regexp.MatchString(pattern, title); matched {
+			logger.Debugf("[TorrentService] '%s' matches season %d with pattern: %s", title, season, pattern)
 			return true
 		}
 	}
 
+	logger.Debugf("[TorrentService] '%s' does not match season %d", title, season)
 	return false
 }
 
@@ -422,11 +432,11 @@ func ClassifyTorrent(title string, mediaType string, season, episode int, base *
 		logger.Debugf("[TorrentService] torrent classification - '%s' contains pattern but doesn't match requested S%dE%d", title, season, episode)
 	}
 
-	// Complete seasons are ignored
-	// if base.MatchesSeason(title, season) || base.ContainsSeason(title) {
-	//	logger.Debugf("[CLASSIFY] '%s' classified as season (matches season %d or contains season pattern)", title, season)
-	//	return "season"
-	// }
+	// Check for complete seasons - only match the specific requested season
+	if season > 0 && base.MatchesSeason(title, season) {
+		logger.Debugf("[TorrentService] torrent classification - '%s' classified as season (matches season %d)", title, season)
+		return "season"
+	}
 
 	return ""
 }

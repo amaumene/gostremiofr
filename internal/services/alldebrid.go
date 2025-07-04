@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -189,6 +191,74 @@ func (a *AllDebrid) UploadMagnet(hash, title, apiKey string) error {
 	return nil
 }
 
+func (a *AllDebrid) GetEpisodeFiles(magnetID string, seasonTorrent models.TorrentInfo, apiKey string) ([]models.EpisodeFile, error) {
+	if apiKey == "" {
+		apiKey = a.apiKey
+	}
+	
+	// Sanitize and validate the API key
+	apiKey = a.validator.SanitizeAPIKey(apiKey)
+	if !a.validator.IsValidAllDebridKey(apiKey) {
+		a.logger.Errorf("[AllDebrid] failed to validate API key for episode files: invalid format (key: %s)", a.validator.MaskAPIKey(apiKey))
+		return nil, fmt.Errorf("invalid AllDebrid API key format")
+	}
+	
+	a.rateLimiter.Wait()
+	
+	// Use our local client
+	resp, err := a.client.GetMagnetFiles(apiKey, magnetID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get episode files: %w", err)
+	}
+	
+	if resp.Status != "success" {
+		if resp.Error != nil {
+			return nil, fmt.Errorf("AllDebrid API error: %s - %s", resp.Error.Code, resp.Error.Message)
+		}
+		return nil, fmt.Errorf("AllDebrid API error: %s", resp.Status)
+	}
+	
+	var episodeFiles []models.EpisodeFile
+	for _, magnet := range resp.Data.Magnets {
+		a.logger.Debugf("[AllDebrid] processing magnet with %d links", len(magnet.Links))
+		for _, link := range magnet.Links {
+			a.logger.Debugf("[AllDebrid] checking file: %s (size: %d)", link.Filename, link.Size)
+			if isVideoFile(link.Filename) {
+				// Parse episode info from filename
+				season, episode := parseEpisodeFromFilename(link.Filename)
+				a.logger.Debugf("[AllDebrid] parsed episode info from '%s': S%02dE%02d", link.Filename, season, episode)
+				
+				if season > 0 && episode > 0 {
+					resolution := parseResolutionFromFilename(link.Filename)
+					language := parseLanguageFromFilename(link.Filename)
+					
+					a.logger.Debugf("[AllDebrid] adding episode file: S%02dE%02d - %s (%s, %s)", 
+						season, episode, link.Filename, resolution, language)
+					
+					episodeFiles = append(episodeFiles, models.EpisodeFile{
+						Name:          link.Filename,
+						Size:          float64(link.Size),
+						Link:          link.Link,
+						Source:        "AllDebrid",
+						Season:        season,
+						Episode:       episode,
+						Resolution:    resolution,
+						Language:      language,
+						SeasonTorrent: seasonTorrent,
+					})
+				} else {
+					a.logger.Debugf("[AllDebrid] skipping file with no episode info: %s", link.Filename)
+				}
+			} else {
+				a.logger.Debugf("[AllDebrid] skipping non-video file: %s", link.Filename)
+			}
+		}
+	}
+	
+	a.logger.Debugf("[AllDebrid] extracted %d episode files from season torrent %s", len(episodeFiles), seasonTorrent.Title)
+	return episodeFiles, nil
+}
+
 func (a *AllDebrid) GetVideoFiles(magnetID, apiKey string) ([]models.VideoFile, error) {
 	if apiKey == "" {
 		apiKey = a.apiKey
@@ -267,6 +337,68 @@ func (a *AllDebrid) UnlockLink(link, apiKey string) (string, error) {
 	return resp.Data.Link, nil
 }
 
+
+func parseEpisodeFromFilename(filename string) (season int, episode int) {
+	// Try different episode patterns
+	patterns := []string{
+		`(?i)s(\d{1,2})e(\d{1,2})`,      // S01E01
+		`(?i)s(\d{1,2})\.e(\d{1,2})`,    // S01.E01
+		`(?i)(\d{1,2})x(\d{1,2})`,       // 1x01
+		`(?i)season\s*(\d{1,2})\s*episode\s*(\d{1,2})`, // Season 1 Episode 1
+	}
+	
+	for _, pattern := range patterns {
+		re := regexp.MustCompile(pattern)
+		matches := re.FindStringSubmatch(filename)
+		if len(matches) >= 3 {
+			if s, err := strconv.Atoi(matches[1]); err == nil {
+				if e, err := strconv.Atoi(matches[2]); err == nil {
+					return s, e
+				}
+			}
+		}
+	}
+	
+	return 0, 0
+}
+
+func parseResolutionFromFilename(filename string) string {
+	patterns := []string{
+		`(?i)(2160p|4k)`,
+		`(?i)(1080p)`,
+		`(?i)(720p)`,
+		`(?i)(480p)`,
+		`(?i)(360p)`,
+	}
+	
+	for _, pattern := range patterns {
+		re := regexp.MustCompile(pattern)
+		if match := re.FindString(filename); match != "" {
+			return strings.ToLower(match)
+		}
+	}
+	
+	return "unknown"
+}
+
+func parseLanguageFromFilename(filename string) string {
+	filename = strings.ToLower(filename)
+	
+	if strings.Contains(filename, "multi") {
+		return "multi"
+	}
+	if strings.Contains(filename, "french") || strings.Contains(filename, "vf") || strings.Contains(filename, "vff") {
+		return "french"
+	}
+	if strings.Contains(filename, "vostfr") {
+		return "vostfr"
+	}
+	if strings.Contains(filename, "english") || strings.Contains(filename, "vo") {
+		return "english"
+	}
+	
+	return "unknown"
+}
 
 func isVideoFile(filename string) bool {
 	videoExtensions := []string{".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".mpg", ".mpeg"}

@@ -239,6 +239,18 @@ type VideoFile struct {
 	Source string
 }
 
+type EpisodeFile struct {
+	Name           string
+	Size           float64
+	Link           string
+	Source         string
+	Season         int
+	Episode        int
+	Resolution     string
+	Language       string
+	SeasonTorrent  TorrentInfo // Reference to the complete season torrent
+}
+
 type FileInfo struct {
 	Name   string     `json:"name"`
 	Size   float64    `json:"size"`
