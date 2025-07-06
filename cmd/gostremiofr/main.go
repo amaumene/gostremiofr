@@ -2,11 +2,11 @@ package main
 
 import (
 	"compress/gzip"
+	"context"
 	"log"
 	"net/http"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/amaumene/gostremiofr/internal/constants"
@@ -82,14 +82,12 @@ func main() {
 		c.Next()
 	})
 	
-	// Start cache cleanup routine
-	go func() {
-		ticker := time.NewTicker(1 * time.Hour)
-		defer ticker.Stop()
-		for range ticker.C {
-			tmdbMemoryCache.CleanExpired()
-		}
-	}()
+	// Create a context for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	
+	// Start cache cleanup routine with proper context
+	tmdbMemoryCache.StartCleanup(ctx)
 
 	// Register all routes through the handler
 	handler.RegisterRoutes(r)

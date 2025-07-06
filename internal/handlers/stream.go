@@ -128,6 +128,7 @@ func (h *Handler) searchTorrentsWithIMDB(query string, mediaType string, season,
 	
 	var combinedResults models.CombinedTorrentResults
 	var wg sync.WaitGroup
+	var mu sync.Mutex
 	
 	goroutineCount := 1
 	if mediaType == "series" && imdbID != "" {
@@ -154,6 +155,7 @@ func (h *Handler) searchTorrentsWithIMDB(query string, mediaType string, season,
 		}
 		
 		if results != nil {
+			mu.Lock()
 			for _, t := range results.MovieTorrents {
 				combinedResults.MovieTorrents = append(combinedResults.MovieTorrents, t)
 			}
@@ -166,6 +168,7 @@ func (h *Handler) searchTorrentsWithIMDB(query string, mediaType string, season,
 			for _, t := range results.EpisodeTorrents {
 				combinedResults.EpisodeTorrents = append(combinedResults.EpisodeTorrents, t)
 			}
+			mu.Unlock()
 		}
 	}()
 	
@@ -186,6 +189,7 @@ func (h *Handler) searchTorrentsWithIMDB(query string, mediaType string, season,
 					len(results.CompleteSeriesTorrents), 
 					len(results.CompleteSeasonTorrents), 
 					len(results.EpisodeTorrents))
+				mu.Lock()
 				for _, t := range results.CompleteSeriesTorrents {
 					combinedResults.CompleteSeriesTorrents = append(combinedResults.CompleteSeriesTorrents, t)
 				}
@@ -195,6 +199,7 @@ func (h *Handler) searchTorrentsWithIMDB(query string, mediaType string, season,
 				for _, t := range results.EpisodeTorrents {
 					combinedResults.EpisodeTorrents = append(combinedResults.EpisodeTorrents, t)
 				}
+				mu.Unlock()
 			} else {
 				h.services.Logger.Debugf("[StreamHandler] EZTV returned no results for IMDB ID: %s", imdbID)
 			}
@@ -217,6 +222,7 @@ func (h *Handler) searchTorrentsWithIMDB(query string, mediaType string, season,
 // searchTorrentsOnly searches for torrents without processing through AllDebrid
 func (h *Handler) searchTorrentsOnly(query, mediaType string, season, episode int, imdbID string, year int) *models.CombinedTorrentResults {
 	var wg sync.WaitGroup
+	var mu sync.Mutex
 	combinedResults := models.CombinedTorrentResults{}
 	
 	// Add YGG search
@@ -236,6 +242,7 @@ func (h *Handler) searchTorrentsOnly(query, mediaType string, season, episode in
 		}
 		
 		if results != nil {
+			mu.Lock()
 			for _, t := range results.MovieTorrents {
 				combinedResults.MovieTorrents = append(combinedResults.MovieTorrents, t)
 			}
@@ -248,6 +255,7 @@ func (h *Handler) searchTorrentsOnly(query, mediaType string, season, episode in
 			for _, t := range results.EpisodeTorrents {
 				combinedResults.EpisodeTorrents = append(combinedResults.EpisodeTorrents, t)
 			}
+			mu.Unlock()
 		}
 	}()
 	
@@ -268,6 +276,7 @@ func (h *Handler) searchTorrentsOnly(query, mediaType string, season, episode in
 					len(results.CompleteSeriesTorrents), 
 					len(results.CompleteSeasonTorrents), 
 					len(results.EpisodeTorrents))
+				mu.Lock()
 				for _, t := range results.CompleteSeriesTorrents {
 					combinedResults.CompleteSeriesTorrents = append(combinedResults.CompleteSeriesTorrents, t)
 				}
@@ -277,6 +286,7 @@ func (h *Handler) searchTorrentsOnly(query, mediaType string, season, episode in
 				for _, t := range results.EpisodeTorrents {
 					combinedResults.EpisodeTorrents = append(combinedResults.EpisodeTorrents, t)
 				}
+				mu.Unlock()
 			} else {
 				h.services.Logger.Debugf("[StreamHandler] EZTV returned no results for IMDB ID: %s", imdbID)
 			}
