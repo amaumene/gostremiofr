@@ -61,7 +61,7 @@ func (e *EZTV) SearchTorrentsByIMDB(imdbID string, season, episode int) (*models
 	}
 
 	apiURL := fmt.Sprintf("https://eztvx.to/api/get-torrents?imdb_id=%s", cleanIMDBID)
-	e.logger.Debugf("[EZTV] API call to search torrents - URL: %s", apiURL)
+	e.logger.Infof("[EZTV] API call to search torrents - URL: %s for S%dE%d", apiURL, season, episode)
 	
 	resp, err := e.httpClient.Get(apiURL)
 	if err != nil {
@@ -81,9 +81,13 @@ func (e *EZTV) SearchTorrentsByIMDB(imdbID string, season, episode int) (*models
 	// Set source for all torrents
 	for i := range eztvResp.Torrents {
 		eztvResp.Torrents[i].Source = "EZTV"
+		// Log first few torrents for debugging
+		if i < 5 {
+			e.logger.Infof("[EZTV] torrent %d: %s (S%sE%s) hash: %s", i+1, eztvResp.Torrents[i].Title, eztvResp.Torrents[i].Season, eztvResp.Torrents[i].Episode, eztvResp.Torrents[i].Hash)
+		}
 	}
 	
-	e.logger.Debugf("[EZTV] API call completed - found %d torrents for IMDB ID %s", len(eztvResp.Torrents), imdbID)
+	e.logger.Infof("[EZTV] API call completed - found %d torrents for IMDB ID %s (looking for S%dE%d)", len(eztvResp.Torrents), imdbID, season, episode)
 
 	return e.processTorrents(eztvResp.Torrents, season, episode), nil
 }

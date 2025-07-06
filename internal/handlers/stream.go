@@ -206,7 +206,7 @@ func (h *Handler) searchTorrentsWithIMDB(query string, mediaType string, season,
 				}
 			}()
 			
-			h.services.Logger.Debugf("[StreamHandler] EZTV search started for IMDB ID: %s", imdbID)
+			h.services.Logger.Infof("[StreamHandler] EZTV search started for IMDB ID: %s, S%dE%d", imdbID, season, episode)
 			results, err := h.services.EZTV.SearchTorrentsByIMDB(imdbID, season, episode)
 			if err != nil {
 				h.services.Logger.Errorf("[StreamHandler] failed to search EZTV: %v", err)
@@ -214,7 +214,7 @@ func (h *Handler) searchTorrentsWithIMDB(query string, mediaType string, season,
 			}
 			
 			if results != nil {
-				h.services.Logger.Debugf("[StreamHandler] EZTV results - complete series: %d, seasons: %d, episodes: %d", 
+				h.services.Logger.Infof("[StreamHandler] EZTV results - complete series: %d, seasons: %d, episodes: %d", 
 					len(results.CompleteSeriesTorrents), 
 					len(results.CompleteSeasonTorrents), 
 					len(results.EpisodeTorrents))
@@ -255,6 +255,13 @@ func (h *Handler) searchTorrentsWithIMDB(query string, mediaType string, season,
 		len(combinedResults.CompleteSeriesTorrents), 
 		len(combinedResults.CompleteSeasonTorrents), 
 		len(combinedResults.EpisodeTorrents))
+	
+	// Log episode torrents for debugging
+	for i, torrent := range combinedResults.EpisodeTorrents {
+		if i < 5 { // Log first 5
+			h.services.Logger.Infof("[StreamHandler] episode torrent %d: %s (source: %s, hash: %s)", i+1, torrent.Title, torrent.Source, torrent.Hash)
+		}
+	}
 	
 	return h.processResults(&combinedResults, apiKey, userConfig, 0, season, episode)
 }
@@ -320,7 +327,7 @@ func (h *Handler) searchTorrentsOnly(query, mediaType string, season, episode in
 				}
 			}()
 			
-			h.services.Logger.Debugf("[StreamHandler] EZTV search started for IMDB ID: %s", imdbID)
+			h.services.Logger.Infof("[StreamHandler] EZTV search started for IMDB ID: %s, S%dE%d", imdbID, season, episode)
 			results, err := h.services.EZTV.SearchTorrentsByIMDB(imdbID, season, episode)
 			if err != nil {
 				h.services.Logger.Errorf("[StreamHandler] failed to search EZTV: %v", err)
@@ -328,7 +335,7 @@ func (h *Handler) searchTorrentsOnly(query, mediaType string, season, episode in
 			}
 			
 			if results != nil {
-				h.services.Logger.Debugf("[StreamHandler] EZTV results - complete series: %d, seasons: %d, episodes: %d", 
+				h.services.Logger.Infof("[StreamHandler] EZTV results - complete series: %d, seasons: %d, episodes: %d", 
 					len(results.CompleteSeriesTorrents), 
 					len(results.CompleteSeasonTorrents), 
 					len(results.EpisodeTorrents))
@@ -399,12 +406,15 @@ func (h *Handler) processResults(results *models.CombinedTorrentResults, apiKey 
 		// Process torrents that already have hashes first
 		for _, torrent := range torrents {
 			if torrent.Hash != "" {
+				h.services.Logger.Infof("[StreamHandler] adding torrent with hash - title: %s, source: %s, hash: %s", torrent.Title, torrent.Source, torrent.Hash)
 				magnets = append(magnets, models.MagnetInfo{
 					Hash:   torrent.Hash,
 					Title:  torrent.Title,
 					Source: torrent.Source,
 				})
 				hashToTorrent[torrent.Hash] = torrent
+			} else {
+				h.services.Logger.Debugf("[StreamHandler] skipping torrent without hash - title: %s, source: %s", torrent.Title, torrent.Source)
 			}
 		}
 		

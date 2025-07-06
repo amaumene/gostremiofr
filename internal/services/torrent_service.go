@@ -203,14 +203,26 @@ func (b *BaseTorrentService) MatchesLanguageFilter(title string, language string
 	// Check language filter
 	langAllowed := len(b.config.LangToShow) == 0
 	if !langAllowed {
-		for _, lang := range b.config.LangToShow {
-			if b.ContainsLanguage(title, lang) || (language != "" && strings.EqualFold(language, lang)) {
-				langAllowed = true
-				break
+		// If a language is explicitly provided (like EZTV's "VO"), use it directly
+		if language != "" {
+			for _, lang := range b.config.LangToShow {
+				if strings.EqualFold(language, lang) {
+					langAllowed = true
+					break
+				}
+			}
+		} else {
+			// Only parse from title if no language is provided (like YGG)
+			for _, lang := range b.config.LangToShow {
+				if b.ContainsLanguage(title, lang) {
+					langAllowed = true
+					break
+				}
 			}
 		}
+		
 		if !langAllowed {
-			logger.Debugf("[TorrentService] language filter applied - title: %s, detected: %s", title, language)
+			logger.Debugf("[TorrentService] language filter applied - title: %s, provided language: %s", title, language)
 		}
 	}
 
@@ -451,7 +463,7 @@ func (b *BaseTorrentService) ProcessTorrents(torrents []GenericTorrent, mediaTyp
 	for _, torrent := range torrents {
 		// First filter: language only
 		if !b.MatchesLanguageFilter(torrent.GetTitle(), torrent.GetLanguage()) {
-			logger.Debugf("[%s] torrent filtered by language - title: %s", serviceName, torrent.GetTitle())
+			logger.Infof("[%s] torrent filtered by language - title: %s, language: %s", serviceName, torrent.GetTitle(), torrent.GetLanguage())
 			continue
 		}
 
@@ -491,9 +503,9 @@ func (b *BaseTorrentService) ProcessTorrents(torrents []GenericTorrent, mediaTyp
 				if torrent.GetSeason() == season && torrent.GetEpisode() == episode {
 					classification = "episode"
 					shouldAdd = true
-					logger.Debugf("[%s] episode match found - S%dE%d: %s", serviceName, season, episode, torrent.GetTitle())
+					logger.Infof("[%s] episode match found - S%dE%d: %s", serviceName, season, episode, torrent.GetTitle())
 				} else {
-					logger.Debugf("[%s] episode mismatch - found S%dE%d, requested S%dE%d: %s", serviceName, torrent.GetSeason(), torrent.GetEpisode(), season, episode, torrent.GetTitle())
+					logger.Infof("[%s] episode mismatch - found S%dE%d, requested S%dE%d: %s", serviceName, torrent.GetSeason(), torrent.GetEpisode(), season, episode, torrent.GetTitle())
 				}
 			} else {
 				// If no specific episode requested, accept any episode
