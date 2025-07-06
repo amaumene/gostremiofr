@@ -480,20 +480,12 @@ func (h *Handler) processResults(results *models.CombinedTorrentResults, apiKey 
 	
 	processTorrents(results.MovieTorrents)
 	processTorrents(results.CompleteSeriesTorrents)
-	
-	// For complete season torrents, only process the best one if we're looking for a specific episode
-	if targetSeason > 0 && targetEpisode > 0 && len(results.CompleteSeasonTorrents) > 0 {
-		// Only process the best complete season torrent
-		processTorrents([]models.TorrentInfo{results.CompleteSeasonTorrents[0]})
-	} else {
-		// Process all season torrents if not looking for a specific episode
-		processTorrents(results.CompleteSeasonTorrents)
-	}
-	
 	processTorrents(results.EpisodeTorrents)
 	
+	// Don't process complete season torrents in the regular flow - they'll be handled separately
+	
 	// Process complete season torrents to extract specific episodes
-	var episodeStreams []models.Stream
+	var seasonTorrentHashes map[string]bool
 	if targetSeason > 0 && targetEpisode > 0 && len(results.CompleteSeasonTorrents) > 0 {
 		h.services.Logger.Infof("[StreamHandler] found %d complete season torrents for S%02dE%02d", 
 			len(results.CompleteSeasonTorrents), targetSeason, targetEpisode)
@@ -502,17 +494,35 @@ func (h *Handler) processResults(results *models.CombinedTorrentResults, apiKey 
 		bestSeasonTorrent := results.CompleteSeasonTorrents[0]
 		h.services.Logger.Infof("[StreamHandler] using best season torrent: %s (hash: %s)", bestSeasonTorrent.Title, bestSeasonTorrent.Hash)
 		
-		// Create a slice with just the best torrent
-		bestSeasonOnly := []models.TorrentInfo{bestSeasonTorrent}
-		episodeStreams = h.extractEpisodesFromSeasons(bestSeasonOnly, apiKey, userConfig, targetSeason, targetEpisode)
-		h.services.Logger.Infof("[StreamHandler] extracted %d episode streams from best complete season", len(episodeStreams))
+		// Add the best season torrent to magnets for processing
+		if bestSeasonTorrent.Hash == "" && bestSeasonTorrent.Source == "YGG" {
+			// Fetch hash for YGG torrent
+			hash, err := h.services.YGG.GetTorrentHash(bestSeasonTorrent.ID)
+			if err == nil && hash != "" {
+				bestSeasonTorrent.Hash = hash
+			}
+		}
+		
+		if bestSeasonTorrent.Hash != "" {
+			// Track season torrent hashes so we can identify them later
+			seasonTorrentHashes = make(map[string]bool)
+			seasonTorrentHashes[bestSeasonTorrent.Hash] = true
+			
+			// Add to magnets for upload
+			magnets = append(magnets, models.MagnetInfo{
+				Hash:   bestSeasonTorrent.Hash,
+				Title:  bestSeasonTorrent.Title,
+				Source: bestSeasonTorrent.Source,
+			})
+			hashToTorrent[bestSeasonTorrent.Hash] = bestSeasonTorrent
+		}
 	} else {
 		h.services.Logger.Infof("[StreamHandler] no season torrents to process - targetSeason: %d, targetEpisode: %d, seasonTorrents: %d", 
 			targetSeason, targetEpisode, len(results.CompleteSeasonTorrents))
 	}
 	
 	if len(magnets) == 0 {
-		return episodeStreams // Return episode streams if no regular magnets found
+		return []models.Stream{} // No magnets to process
 	}
 	
 	// Limit the number of magnets to prevent AllDebrid API timeouts
@@ -559,24 +569,91 @@ func (h *Handler) processResults(results *models.CombinedTorrentResults, apiKey 
 			if len(processedMagnets) > 0 && processedMagnets[0].Ready && len(processedMagnets[0].Links) > 0 {
 				h.services.Logger.Infof("[StreamHandler] magnet is ready with %d links!", len(processedMagnets[0].Links))
 				
-				// Create stream from this magnet
-				torrent := hashToTorrent[magnet.Hash]
-				for _, link := range processedMagnets[0].Links {
-					if linkObj, ok := link.(map[string]interface{}); ok {
-						if linkStr, ok := linkObj["link"].(string); ok {
-							streamTitle := fmt.Sprintf("%s\n%s", torrent.Title, parseFileInfo(linkObj))
+				// Check if this is a season torrent that needs special handling
+				if seasonTorrentHashes != nil && seasonTorrentHashes[magnet.Hash] && targetSeason > 0 && targetEpisode > 0 {
+					h.services.Logger.Infof("[StreamHandler] processing season torrent for specific episode S%02dE%02d", targetSeason, targetEpisode)
+					
+					// Process the links directly to find the target episode
+					h.services.Logger.Infof("[StreamHandler] processing %d links from season torrent", len(processedMagnets[0].Links))
+					
+					for _, link := range processedMagnets[0].Links {
+						if linkObj, ok := link.(map[string]interface{}); ok {
+							// Get filename and check if it's a video file
+							filename, _ := linkObj["filename"].(string)
+							linkStr, _ := linkObj["link"].(string)
+							size, _ := linkObj["size"].(float64)
+							
+							if filename != "" && linkStr != "" && isVideoFile(filename) {
+								// Parse episode info from filename
+								season, episode := parseEpisodeFromFilename(filename)
+								h.services.Logger.Debugf("[StreamHandler] checking file: %s (S%02dE%02d)", filename, season, episode)
+								
+								if season == targetSeason && episode == targetEpisode {
+									h.services.Logger.Infof("[StreamHandler] found target episode: S%02dE%02d - %s", season, episode, filename)
+									
+									// Unlock the episode link
+									directURL, err := h.services.AllDebrid.UnlockLink(linkStr, apiKey)
+									if err != nil {
+										h.services.Logger.Errorf("[StreamHandler] failed to unlock episode link: %v", err)
+										continue
+									}
+									
+									streamTitle := fmt.Sprintf("%.2f GB - %s (S%02dE%02d from season pack)", size/(1024*1024*1024), filename, season, episode)
+									
+									stream := models.Stream{
+										Name:  "AllDebrid",
+										Title: streamTitle,
+										URL:   directURL,
+									}
+									allStreams = append(allStreams, stream)
+									isReady = true
+									break // Found the target episode, stop searching
+								}
+							}
+						}
+					}
+				} else {
+					// Regular torrent processing
+					torrent := hashToTorrent[magnet.Hash]
+					
+					// Find the largest video file
+					var largestVideo map[string]interface{}
+					var largestSize float64
+					
+					for _, link := range processedMagnets[0].Links {
+						if linkObj, ok := link.(map[string]interface{}); ok {
+							if size, ok := linkObj["size"].(float64); ok {
+								if size > largestSize {
+									largestSize = size
+									largestVideo = linkObj
+								}
+							}
+						}
+					}
+					
+					// Process the largest video file
+					if largestVideo != nil {
+						if linkStr, ok := largestVideo["link"].(string); ok {
+							// Unlock the link to get direct URL
+							directURL, err := h.services.AllDebrid.UnlockLink(linkStr, apiKey)
+							if err != nil {
+								h.services.Logger.Errorf("[StreamHandler] failed to unlock link: %v", err)
+								continue
+							}
+							
+							streamTitle := fmt.Sprintf("%s\n%s", torrent.Title, parseFileInfo(largestVideo))
 							
 							stream := models.Stream{
 								Name:  "AllDebrid",
 								Title: streamTitle,
-								URL:   linkStr,
+								URL:   directURL,
 							}
 							allStreams = append(allStreams, stream)
 						}
 					}
+					
+					isReady = true
 				}
-				
-				isReady = true
 				break
 			}
 			
@@ -589,24 +666,13 @@ func (h *Handler) processResults(results *models.CombinedTorrentResults, apiKey 
 		// If we found a ready magnet, return immediately
 		if isReady && len(allStreams) > 0 {
 			h.services.Logger.Infof("[StreamHandler] found ready magnet, returning %d streams", len(allStreams))
-			
-			// Combine with episode streams if any
-			if len(episodeStreams) > 0 {
-				allStreams = append(episodeStreams, allStreams...)
-			}
-			
 			return allStreams
 		}
 		
 		h.services.Logger.Infof("[StreamHandler] magnet %d not ready after 2 attempts, trying next", i+1)
 	}
 	
-	h.services.Logger.Infof("[StreamHandler] no magnets became ready, checking if any episode streams available")
-	
-	// If no regular magnets worked, return episode streams if available
-	if len(episodeStreams) > 0 {
-		return episodeStreams
-	}
+	h.services.Logger.Infof("[StreamHandler] no magnets became ready")
 	
 	// No streams found
 	return []models.Stream{}
@@ -845,6 +911,31 @@ func (h *Handler) isEpisodeAllowed(episode models.EpisodeFile, userConfig *confi
 	
 	h.services.Logger.Debugf("[StreamHandler] episode passed all filters: %s", episode.Name)
 	return true
+}
+
+// Helper functions for episode processing
+func parseEpisodeFromFilename(filename string) (season int, episode int) {
+	// Try different episode patterns
+	patterns := []string{
+		`(?i)s(\d{1,2})e(\d{1,2})`,      // S01E01
+		`(?i)s(\d{1,2})\.e(\d{1,2})`,    // S01.E01
+		`(?i)(\d{1,2})x(\d{1,2})`,       // 1x01
+		`(?i)season\s*(\d{1,2})\s*episode\s*(\d{1,2})`, // Season 1 Episode 1
+	}
+	
+	for _, pattern := range patterns {
+		re := regexp.MustCompile(pattern)
+		matches := re.FindStringSubmatch(filename)
+		if len(matches) >= 3 {
+			if s, err := strconv.Atoi(matches[1]); err == nil {
+				if e, err := strconv.Atoi(matches[2]); err == nil {
+					return s, e
+				}
+			}
+		}
+	}
+	
+	return 0, 0
 }
 
 // containsLanguage checks if a title contains a specific language
