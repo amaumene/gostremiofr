@@ -480,19 +480,32 @@ func (h *Handler) processResults(results *models.CombinedTorrentResults, apiKey 
 	
 	processTorrents(results.MovieTorrents)
 	processTorrents(results.CompleteSeriesTorrents)
-	processTorrents(results.CompleteSeasonTorrents)
+	
+	// For complete season torrents, only process the best one if we're looking for a specific episode
+	if targetSeason > 0 && targetEpisode > 0 && len(results.CompleteSeasonTorrents) > 0 {
+		// Only process the best complete season torrent
+		processTorrents([]models.TorrentInfo{results.CompleteSeasonTorrents[0]})
+	} else {
+		// Process all season torrents if not looking for a specific episode
+		processTorrents(results.CompleteSeasonTorrents)
+	}
+	
 	processTorrents(results.EpisodeTorrents)
 	
 	// Process complete season torrents to extract specific episodes
 	var episodeStreams []models.Stream
 	if targetSeason > 0 && targetEpisode > 0 && len(results.CompleteSeasonTorrents) > 0 {
-		h.services.Logger.Infof("[StreamHandler] processing %d complete season torrents for S%02dE%02d", 
+		h.services.Logger.Infof("[StreamHandler] found %d complete season torrents for S%02dE%02d", 
 			len(results.CompleteSeasonTorrents), targetSeason, targetEpisode)
-		for _, torrent := range results.CompleteSeasonTorrents {
-			h.services.Logger.Debugf("[StreamHandler] season torrent: %s (hash: %s)", torrent.Title, torrent.Hash)
-		}
-		episodeStreams = h.extractEpisodesFromSeasons(results.CompleteSeasonTorrents, apiKey, userConfig, targetSeason, targetEpisode)
-		h.services.Logger.Infof("[StreamHandler] extracted %d episode streams from complete seasons", len(episodeStreams))
+		
+		// Only use the best complete season torrent (already sorted by priority)
+		bestSeasonTorrent := results.CompleteSeasonTorrents[0]
+		h.services.Logger.Infof("[StreamHandler] using best season torrent: %s (hash: %s)", bestSeasonTorrent.Title, bestSeasonTorrent.Hash)
+		
+		// Create a slice with just the best torrent
+		bestSeasonOnly := []models.TorrentInfo{bestSeasonTorrent}
+		episodeStreams = h.extractEpisodesFromSeasons(bestSeasonOnly, apiKey, userConfig, targetSeason, targetEpisode)
+		h.services.Logger.Infof("[StreamHandler] extracted %d episode streams from best complete season", len(episodeStreams))
 	} else {
 		h.services.Logger.Infof("[StreamHandler] no season torrents to process - targetSeason: %d, targetEpisode: %d, seasonTorrents: %d", 
 			targetSeason, targetEpisode, len(results.CompleteSeasonTorrents))
