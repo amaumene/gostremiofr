@@ -540,12 +540,6 @@ func (h *Handler) processResults(results *models.CombinedTorrentResults, apiKey 
 		}
 		h.services.Logger.Infof("[StreamHandler] uploaded %d/%d magnets successfully", uploadCount, len(providerMagnets))
 		
-		// Wait a moment for AllDebrid to process the uploads
-		if uploadCount > 0 {
-			h.services.Logger.Infof("[StreamHandler] waiting 1s for AllDebrid to process uploads...")
-			time.Sleep(1 * time.Second)
-		}
-		
 		// Now check magnets with AllDebrid, with retry logic for timing issues
 		var processedMagnets []models.ProcessedMagnet
 		var err error
