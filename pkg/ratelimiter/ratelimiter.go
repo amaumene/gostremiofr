@@ -1,6 +1,7 @@
 package ratelimiter
 
 import (
+	"fmt"
 	"sync"
 	"time"
 )
@@ -8,6 +9,7 @@ import (
 type RateLimiter interface {
 	TakeToken() bool
 	Wait()
+	WaitWithTimeout(timeout time.Duration) error
 }
 
 type TokenBucket struct {
@@ -54,6 +56,13 @@ func (tb *TokenBucket) TakeToken() bool {
 }
 
 func (tb *TokenBucket) Wait() {
+	// Default to 5 second timeout for backward compatibility
+	tb.WaitWithTimeout(5 * time.Second)
+}
+
+func (tb *TokenBucket) WaitWithTimeout(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	
 	// Calculate wait time based on refill rate
 	waitTime := time.Second / time.Duration(tb.refillRate)
 	if waitTime < 100*time.Millisecond {
@@ -61,8 +70,12 @@ func (tb *TokenBucket) Wait() {
 	}
 	
 	for !tb.TakeToken() {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("rate limiter timeout after %v", timeout)
+		}
 		time.Sleep(waitTime)
 	}
+	return nil
 }
 
 func min(a, b int64) int64 {

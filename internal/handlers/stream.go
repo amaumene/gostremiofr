@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -25,6 +26,18 @@ var (
 )
 
 func (h *Handler) handleStream(c *gin.Context) {
+	// Add 30-second timeout for the entire request
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	defer cancel()
+	
+	// Monitor timeout
+	go func() {
+		<-ctx.Done()
+		if ctx.Err() == context.DeadlineExceeded {
+			h.services.Logger.Errorf("[StreamHandler] request timeout for ID: %s", c.Param("id"))
+		}
+	}()
+	
 	configuration := c.Param("configuration")
 	id := c.Param("id")
 	
@@ -130,6 +143,10 @@ func (h *Handler) searchTorrentsWithIMDB(query string, mediaType string, season,
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	
+	// Create timeout channel for search operations
+	searchTimeout := 15 * time.Second
+	done := make(chan bool)
+	
 	goroutineCount := 1
 	if mediaType == "series" && imdbID != "" {
 		goroutineCount = 2 // Add EZTV for series
@@ -142,6 +159,12 @@ func (h *Handler) searchTorrentsWithIMDB(query string, mediaType string, season,
 	
 	go func() {
 		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				h.services.Logger.Errorf("[StreamHandler] YGG search panic recovered: %v", r)
+			}
+		}()
+		
 		category := "movie"
 		if mediaType == "series" {
 			category = "series"
@@ -177,6 +200,12 @@ func (h *Handler) searchTorrentsWithIMDB(query string, mediaType string, season,
 	if mediaType == "series" && imdbID != "" {
 		go func() {
 			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					h.services.Logger.Errorf("[StreamHandler] EZTV search panic recovered: %v", r)
+				}
+			}()
+			
 			h.services.Logger.Debugf("[StreamHandler] EZTV search started for IMDB ID: %s", imdbID)
 			results, err := h.services.EZTV.SearchTorrentsByIMDB(imdbID, season, episode)
 			if err != nil {
@@ -208,7 +237,18 @@ func (h *Handler) searchTorrentsWithIMDB(query string, mediaType string, season,
 		h.services.Logger.Debugf("[StreamHandler] skipping EZTV search - mediaType: %s, imdbID: %s", mediaType, imdbID)
 	}
 	
-	wg.Wait()
+	// Wait for searches with timeout
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	
+	select {
+	case <-done:
+		h.services.Logger.Debugf("[StreamHandler] all searches completed successfully")
+	case <-time.After(searchTimeout):
+		h.services.Logger.Errorf("[StreamHandler] search timeout after %v for query: %s", searchTimeout, query)
+	}
 	
 	h.services.Logger.Infof("[StreamHandler] search completed - movies: %d, complete series: %d, seasons: %d, episodes: %d", 
 		len(combinedResults.MovieTorrents), 
@@ -225,10 +265,20 @@ func (h *Handler) searchTorrentsOnly(query, mediaType string, season, episode in
 	var mu sync.Mutex
 	combinedResults := models.CombinedTorrentResults{}
 	
+	// Create timeout channel for search operations
+	searchTimeout := 15 * time.Second
+	done := make(chan bool)
+	
 	// Add YGG search
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				h.services.Logger.Errorf("[StreamHandler] YGG search panic recovered: %v", r)
+			}
+		}()
+		
 		category := "movie"
 		if mediaType == "series" {
 			category = "series"
@@ -264,6 +314,12 @@ func (h *Handler) searchTorrentsOnly(query, mediaType string, season, episode in
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					h.services.Logger.Errorf("[StreamHandler] EZTV search panic recovered: %v", r)
+				}
+			}()
+			
 			h.services.Logger.Debugf("[StreamHandler] EZTV search started for IMDB ID: %s", imdbID)
 			results, err := h.services.EZTV.SearchTorrentsByIMDB(imdbID, season, episode)
 			if err != nil {
@@ -295,7 +351,18 @@ func (h *Handler) searchTorrentsOnly(query, mediaType string, season, episode in
 		h.services.Logger.Debugf("[StreamHandler] skipping EZTV search - mediaType: %s, imdbID: %s", mediaType, imdbID)
 	}
 	
-	wg.Wait()
+	// Wait for searches with timeout
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	
+	select {
+	case <-done:
+		h.services.Logger.Debugf("[StreamHandler] all searches completed successfully")
+	case <-time.After(searchTimeout):
+		h.services.Logger.Errorf("[StreamHandler] search timeout after %v for query: %s", searchTimeout, query)
+	}
 	
 	h.services.Logger.Infof("[StreamHandler] search completed - movies: %d, complete series: %d, seasons: %d, episodes: %d", 
 		len(combinedResults.MovieTorrents), 
@@ -451,7 +518,7 @@ func (h *Handler) processResults(results *models.CombinedTorrentResults, apiKey 
 			debridService = userConfig.GetDebridForProvider(provider)
 		}
 		
-		h.services.Logger.Infof("[StreamHandler] checking %d magnets from %s with %s", len(providerMagnets), provider, debridService)
+		h.services.Logger.Infof("[StreamHandler] processing %d magnets from %s with %s", len(providerMagnets), provider, debridService)
 		
 		// Currently only AllDebrid is supported
 		if debridService != "alldebrid" {
@@ -459,18 +526,40 @@ func (h *Handler) processResults(results *models.CombinedTorrentResults, apiKey 
 			continue
 		}
 		
-		// Try checking magnets with AllDebrid, with retry logic for timing issues
+		// First, upload all magnets to AllDebrid
+		h.services.Logger.Infof("[StreamHandler] uploading %d magnets to AllDebrid", len(providerMagnets))
+		uploadCount := 0
+		for _, magnet := range providerMagnets {
+			err := h.services.AllDebrid.UploadMagnet(magnet.Hash, magnet.Title, apiKey)
+			if err != nil {
+				h.services.Logger.Errorf("[StreamHandler] failed to upload magnet %s: %v", magnet.Title, err)
+			} else {
+				uploadCount++
+				h.services.Logger.Infof("[StreamHandler] magnet uploaded to AllDebrid - title: %s", magnet.Title)
+			}
+		}
+		h.services.Logger.Infof("[StreamHandler] uploaded %d/%d magnets successfully", uploadCount, len(providerMagnets))
+		
+		// Wait a moment for AllDebrid to process the uploads
+		if uploadCount > 0 {
+			h.services.Logger.Infof("[StreamHandler] waiting 1s for AllDebrid to process uploads...")
+			time.Sleep(1 * time.Second)
+		}
+		
+		// Now check magnets with AllDebrid, with retry logic for timing issues
 		var processedMagnets []models.ProcessedMagnet
 		var err error
 		
-		for attempt := 1; attempt <= 2; attempt++ {
-			h.services.Logger.Infof("[StreamHandler] %s CheckMagnets attempt %d/2 for provider %s", debridService, attempt, provider)
+		for attempt := 1; attempt <= 8; attempt++ {
+			h.services.Logger.Infof("[StreamHandler] %s CheckMagnets attempt %d/8 for provider %s", debridService, attempt, provider)
 			processedMagnets, err = h.services.AllDebrid.CheckMagnets(providerMagnets, apiKey)
 			if err != nil {
 				h.services.Logger.Errorf("[StreamHandler] %s CheckMagnets attempt %d failed for provider %s: %v", debridService, attempt, provider, err)
-				if attempt == 2 {
+				if attempt == 8 {
 					continue // Skip this provider's magnets
 				}
+				// Wait a bit before retrying
+				time.Sleep(time.Duration(attempt) * time.Second)
 				continue
 			}
 			
@@ -485,14 +574,15 @@ func (h *Handler) processResults(results *models.CombinedTorrentResults, apiKey 
 			}
 			
 			// If we got some ready results, or this is the final attempt, use what we have
-			if readyCount > 0 || attempt == 2 {
+			if readyCount > 0 || attempt == 8 {
 				h.services.Logger.Infof("[StreamHandler] using results from attempt %d - %d ready magnets for provider %s", attempt, readyCount, provider)
 				break
 			}
 			
-			// If no magnets ready on first attempt, wait 2 seconds and retry
-			h.services.Logger.Infof("[StreamHandler] no ready magnets on attempt %d for provider %s, waiting 2s before retry", attempt, provider)
-			time.Sleep(2 * time.Second)
+			// If no magnets ready, wait before retry (longer wait for later attempts)
+			waitTime := time.Duration(attempt) * 2 * time.Second
+			h.services.Logger.Infof("[StreamHandler] no ready magnets on attempt %d for provider %s, waiting %v before retry", attempt, provider, waitTime)
+			time.Sleep(waitTime)
 		}
 		
 		// Add processed magnets to the combined results
@@ -556,25 +646,7 @@ func (h *Handler) processResults(results *models.CombinedTorrentResults, apiKey 
 	}
 	h.services.Logger.Debugf("[StreamHandler] cache check results - ready: %d, total: %d", finalReadyCount, len(allProcessedMagnets))
 	
-	maxFiles := constants.DefaultFilesToShow
-	if h.config != nil {
-		maxFiles = h.config.FilesToShow
-	}
-	
-	if len(streams) < maxFiles {
-		for _, magnet := range magnets {
-			if len(streams) >= maxFiles {
-				break
-			}
-			
-			if !isMagnetReady(magnet.Hash, allProcessedMagnets) {
-				err := h.services.AllDebrid.UploadMagnet(magnet.Hash, magnet.Title, apiKey)
-				if err == nil {
-					h.services.Logger.Infof("[StreamHandler] magnet uploaded to AllDebrid - title: %s", magnet.Title)
-				}
-			}
-		}
-	}
+	// Note: Magnets are already uploaded before checking, so no need to upload again
 	
 	// Combine episode streams from complete seasons with regular streams
 	// Prioritize episodes from complete seasons by placing them first

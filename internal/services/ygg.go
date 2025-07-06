@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
+	"time"
 
 	"github.com/amaumene/gostremiofr/internal/cache"
 	"github.com/amaumene/gostremiofr/internal/config"
@@ -179,31 +180,47 @@ func (y *YGG) SearchTorrents(query string, category string, season, episode int)
 	if category == "series" && season > 0 && episode > 0 {
 		var wg sync.WaitGroup
 		var mu sync.Mutex
+		matchCount := 0
+		
+		y.logger.Infof("[YGG] searching for S%dE%d in %d torrents", season, episode, len(torrents))
 		
 		for i := range torrents {
 			torrents[i].Source = "YGG"
 			
 			// Check if this torrent matches the specific episode
 			if y.BaseTorrentService.MatchesEpisode(torrents[i].Title, season, episode) {
+				matchCount++
 				wg.Add(1)
 				go func(index int, torrent models.YggTorrent) {
 					defer wg.Done()
 					
 					y.logger.Debugf("[YGG] fetching hash for episode match - title: %s", torrent.Title)
+					startTime := time.Now()
 					hash, err := y.GetTorrentHash(fmt.Sprintf("%d", torrent.ID))
+					duration := time.Since(startTime)
 					
 					mu.Lock()
 					if err != nil {
-						y.logger.Debugf("[YGG] failed to fetch hash for torrent %d: %v", torrent.ID, err)
+						y.logger.Errorf("[YGG] failed to fetch hash for torrent %d after %v: %v", torrent.ID, duration, err)
 					} else {
 						torrents[index].Hash = hash
-						y.logger.Debugf("[YGG] hash fetched successfully - title: %s, hash: %s", torrent.Title, hash)
+						y.logger.Infof("[YGG] hash fetched successfully in %v - title: %s, hash: %s", duration, torrent.Title, hash)
 					}
 					mu.Unlock()
 				}(i, torrents[i])
+			} else {
+				y.logger.Debugf("[YGG] torrent does not match S%dE%d - title: %s", season, episode, torrents[i].Title)
 			}
 		}
+		
+		if matchCount == 0 {
+			y.logger.Warnf("[YGG] NO torrents found matching S%dE%d out of %d torrents", season, episode, len(torrents))
+		} else {
+			y.logger.Infof("[YGG] found %d torrents matching S%dE%d, fetching hashes...", matchCount, season, episode)
+		}
+		
 		wg.Wait()
+		y.logger.Infof("[YGG] completed hash fetching for S%dE%d", season, episode)
 	} else {
 		// For movies or complete series, set source but don't fetch hashes
 		for i := range torrents {
