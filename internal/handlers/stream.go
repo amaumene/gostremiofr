@@ -522,159 +522,114 @@ func (h *Handler) processResults(results *models.CombinedTorrentResults, apiKey 
 		magnets = magnets[:maxMagnets]
 	}
 	
-	// Group magnets by their provider
-	magnetsByProvider := make(map[string][]models.MagnetInfo)
-	for _, magnet := range magnets {
-		provider := strings.ToLower(magnet.Source)
-		magnetsByProvider[provider] = append(magnetsByProvider[provider], magnet)
-	}
+	h.services.Logger.Infof("[StreamHandler] processing %d magnets sequentially", len(magnets))
 	
-	h.services.Logger.Infof("[StreamHandler] checking %d magnets with debrid services (grouped by provider)", len(magnets))
+	// Process magnets one by one, starting with the best
+	var allStreams []models.Stream
 	
-	// Process magnets grouped by provider
-	var allProcessedMagnets []models.ProcessedMagnet
-	
-	for provider, providerMagnets := range magnetsByProvider {
-		// Get the debrid service for this provider
-		debridService := "alldebrid" // default
-		if userConfig != nil {
-			debridService = userConfig.GetDebridForProvider(provider)
-		}
+	for i, magnet := range magnets {
+		h.services.Logger.Infof("[StreamHandler] trying magnet %d/%d: %s", i+1, len(magnets), magnet.Title)
 		
-		h.services.Logger.Infof("[StreamHandler] processing %d magnets from %s with %s", len(providerMagnets), provider, debridService)
-		
-		// Currently only AllDebrid is supported
-		if debridService != "alldebrid" {
-			h.services.Logger.Warnf("[StreamHandler] unsupported debrid service %s for provider %s, skipping", debridService, provider)
+		// Upload the magnet
+		err := h.services.AllDebrid.UploadMagnet(magnet.Hash, magnet.Title, apiKey)
+		if err != nil {
+			h.services.Logger.Errorf("[StreamHandler] failed to upload magnet %s: %v", magnet.Title, err)
 			continue
 		}
+		h.services.Logger.Infof("[StreamHandler] magnet uploaded successfully: %s", magnet.Title)
 		
-		// First, upload all magnets to AllDebrid
-		h.services.Logger.Infof("[StreamHandler] uploading %d magnets to AllDebrid", len(providerMagnets))
-		uploadCount := 0
-		for _, magnet := range providerMagnets {
-			err := h.services.AllDebrid.UploadMagnet(magnet.Hash, magnet.Title, apiKey)
+		// Check the magnet status with 2 attempts
+		var isReady bool
+		for attempt := 1; attempt <= 2; attempt++ {
+			h.services.Logger.Infof("[StreamHandler] checking magnet status - attempt %d/2", attempt)
+			
+			// Check just this one magnet
+			singleMagnetSlice := []models.MagnetInfo{magnet}
+			processedMagnets, err := h.services.AllDebrid.CheckMagnets(singleMagnetSlice, apiKey)
 			if err != nil {
-				h.services.Logger.Errorf("[StreamHandler] failed to upload magnet %s: %v", magnet.Title, err)
-			} else {
-				uploadCount++
-				h.services.Logger.Infof("[StreamHandler] magnet uploaded to AllDebrid - title: %s", magnet.Title)
-			}
-		}
-		h.services.Logger.Infof("[StreamHandler] uploaded %d/%d magnets successfully", uploadCount, len(providerMagnets))
-		
-		// Now check magnets with AllDebrid, with retry logic for timing issues
-		var processedMagnets []models.ProcessedMagnet
-		var err error
-		
-		for attempt := 1; attempt <= 8; attempt++ {
-			h.services.Logger.Infof("[StreamHandler] %s CheckMagnets attempt %d/8 for provider %s", debridService, attempt, provider)
-			processedMagnets, err = h.services.AllDebrid.CheckMagnets(providerMagnets, apiKey)
-			if err != nil {
-				h.services.Logger.Errorf("[StreamHandler] %s CheckMagnets attempt %d failed for provider %s: %v", debridService, attempt, provider, err)
-				if attempt == 8 {
-					continue // Skip this provider's magnets
+				h.services.Logger.Errorf("[StreamHandler] CheckMagnets failed: %v", err)
+				if attempt < 2 {
+					time.Sleep(2 * time.Second)
+					continue
 				}
-				// Wait a bit before retrying
-				time.Sleep(time.Duration(attempt) * time.Second)
-				continue
-			}
-			
-			h.services.Logger.Infof("[StreamHandler] %s attempt %d completed for provider %s - processed %d magnets", debridService, attempt, provider, len(processedMagnets))
-			
-			// Count how many are ready
-			readyCount := 0
-			for _, magnet := range processedMagnets {
-				if magnet.Ready && len(magnet.Links) > 0 {
-					readyCount++
-				}
-			}
-			
-			// If we got some ready results, or this is the final attempt, use what we have
-			if readyCount > 0 || attempt == 8 {
-				h.services.Logger.Infof("[StreamHandler] using results from attempt %d - %d ready magnets for provider %s", attempt, readyCount, provider)
 				break
 			}
 			
-			// If no magnets ready, wait before retry (longer wait for later attempts)
-			waitTime := time.Duration(attempt) * 2 * time.Second
-			h.services.Logger.Infof("[StreamHandler] no ready magnets on attempt %d for provider %s, waiting %v before retry", attempt, provider, waitTime)
-			time.Sleep(waitTime)
-		}
-		
-		// Add processed magnets to the combined results
-		allProcessedMagnets = append(allProcessedMagnets, processedMagnets...)
-	}
-	
-	var streams []models.Stream
-	finalReadyCount := 0
-	for i, magnet := range allProcessedMagnets {
-		h.services.Logger.Debugf("[StreamHandler] magnet %d: ready=%v, links_count=%d, hash=%s", i, magnet.Ready, len(magnet.Links), magnet.Hash)
-		
-		if magnet.Ready && len(magnet.Links) > 0 {
-			finalReadyCount++
-			torrent := hashToTorrent[magnet.Hash]
-			
-			h.services.Logger.Debugf("[StreamHandler] processing ready magnet - links: %+v", magnet.Links)
-			
-			// Find the largest video file from the links
-			videoLink := h.findLargestVideoFile(magnet.Links)
-			if videoLink == nil {
-				h.services.Logger.Warnf("[StreamHandler] no video file found in magnet links")
-				continue
+			// Check if it's ready
+			if len(processedMagnets) > 0 && processedMagnets[0].Ready && len(processedMagnets[0].Links) > 0 {
+				h.services.Logger.Infof("[StreamHandler] magnet is ready with %d links!", len(processedMagnets[0].Links))
+				
+				// Create stream from this magnet
+				torrent := hashToTorrent[magnet.Hash]
+				for _, link := range processedMagnets[0].Links {
+					if linkObj, ok := link.(map[string]interface{}); ok {
+						if linkStr, ok := linkObj["link"].(string); ok {
+							streamTitle := fmt.Sprintf("%s\n%s", torrent.Title, parseFileInfo(linkObj))
+							
+							stream := models.Stream{
+								Name:  "AllDebrid",
+								Title: streamTitle,
+								URL:   linkStr,
+							}
+							allStreams = append(allStreams, stream)
+						}
+					}
+				}
+				
+				isReady = true
+				break
 			}
 			
-			h.services.Logger.Debugf("[StreamHandler] selected video link: %+v", videoLink)
-			
-			// Extract download URL from the video link object
-			if webLink, exists := videoLink["link"].(string); exists {
-				h.services.Logger.Debugf("[StreamHandler] attempting to unlock video link: %s", webLink)
-				// Unlock the link to get the direct download URL
-				directURL, err := h.services.AllDebrid.UnlockLink(webLink, apiKey)
-				if err != nil {
-					h.services.Logger.Errorf("[StreamHandler] failed to unlock link %s: %v", webLink, err)
-					continue
-				}
-				
-				h.services.Logger.Debugf("[StreamHandler] successfully unlocked video link: %s", directURL)
-				
-				// Get video file size and name
-				videoSize := float64(0)
-				videoName := magnet.Name
-				if size, ok := videoLink["size"].(float64); ok {
-					videoSize = size
-				}
-				if filename, ok := videoLink["filename"].(string); ok {
-					videoName = filename
-				}
-				
-				stream := models.Stream{
-					Name:  fmt.Sprintf("[%s] %s", torrent.Source, torrent.Title),
-					Title: fmt.Sprintf("%.2f GB - %s", videoSize/(1024*1024*1024), videoName),
-					URL:   directURL,
-				}
-				streams = append(streams, stream)
-			} else {
-				h.services.Logger.Warnf("[StreamHandler] video link object missing 'link' field")
+			if attempt < 2 {
+				h.services.Logger.Infof("[StreamHandler] magnet not ready yet, waiting 3s before retry")
+				time.Sleep(3 * time.Second)
 			}
-		} else {
-			h.services.Logger.Debugf("[StreamHandler] skipping magnet - ready=%v, links=%d", magnet.Ready, len(magnet.Links))
 		}
+		
+		// If we found a ready magnet, return immediately
+		if isReady && len(allStreams) > 0 {
+			h.services.Logger.Infof("[StreamHandler] found ready magnet, returning %d streams", len(allStreams))
+			
+			// Combine with episode streams if any
+			if len(episodeStreams) > 0 {
+				allStreams = append(episodeStreams, allStreams...)
+			}
+			
+			return allStreams
+		}
+		
+		h.services.Logger.Infof("[StreamHandler] magnet %d not ready after 2 attempts, trying next", i+1)
 	}
-	h.services.Logger.Debugf("[StreamHandler] cache check results - ready: %d, total: %d", finalReadyCount, len(allProcessedMagnets))
 	
-	// Note: Magnets are already uploaded before checking, so no need to upload again
+	h.services.Logger.Infof("[StreamHandler] no magnets became ready, checking if any episode streams available")
 	
-	// Combine episode streams from complete seasons with regular streams
-	// Prioritize episodes from complete seasons by placing them first
-	allStreams := append(episodeStreams, streams...)
+	// If no regular magnets worked, return episode streams if available
+	if len(episodeStreams) > 0 {
+		return episodeStreams
+	}
 	
-	// Sort all streams using comprehensive logic: resolution priority, language priority, size, and season priority
-	h.sortAllStreams(allStreams, len(episodeStreams), userConfig)
+	// No streams found
+	return []models.Stream{}
+}
+
+func parseFileInfo(linkObj map[string]interface{}) string {
+	info := ""
 	
-	h.services.Logger.Debugf("[StreamHandler] stream processing completed - returning %d streams (%d from complete seasons, %d regular)", 
-		len(allStreams), len(episodeStreams), len(streams))
-	return allStreams
+	// Add size if available
+	if size, ok := linkObj["size"].(float64); ok {
+		sizeGB := size / (1024 * 1024 * 1024)
+		info += fmt.Sprintf("💾 %.2f GB", sizeGB)
+	}
+	
+	// Add filename if available
+	if filename, ok := linkObj["filename"].(string); ok {
+		if info != "" {
+			info += " • "
+		}
+		info += fmt.Sprintf("📄 %s", filename)
+	}
+	
+	return info
 }
 
 func parseStreamID(id string) (string, int, int) {
