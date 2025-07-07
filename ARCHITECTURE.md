@@ -12,15 +12,17 @@
 
 ## Overview
 
-GoStremioFR is a Stremio addon that aggregates torrents from multiple French torrent sites (YGG) and international sites (EZTV), processes them through debrid services (AllDebrid), and provides streaming links to Stremio.
+GoStremioFR is a Stremio addon that aggregates torrents from multiple French torrent sites (YGG) and international sites (Apibay), processes them through debrid services (AllDebrid), and provides streaming links to Stremio.
 
 ### Key Features
-- Multi-source torrent aggregation (YGG for French content, EZTV for international)
+- Multi-source torrent aggregation (YGG for French content, Apibay for international)
 - TMDB integration for metadata and French title translation
 - AllDebrid integration for instant streaming
 - Intelligent caching system
 - Resolution and language filtering
 - Concurrent search with timeout protection
+- Sequential torrent processing for optimal performance
+- Generic search infrastructure with unified query format
 
 ## Request Flow
 
@@ -68,11 +70,11 @@ User Request → Gin Router → handleCatalog() → Catalog Response
 
 ### 3. **Services (`internal/services/`)**
 - **ygg.go**: YGG torrent site integration (French content)
-- **eztv.go**: EZTV torrent site integration (TV series)
 - **apibay.go**: Apibay/The Pirate Bay API integration (International content)
 - **tmdb.go**: TMDB API integration
 - **alldebrid.go**: AllDebrid service integration
 - **torrent_service.go**: Base torrent processing logic
+- **container.go**: Service container and dependency injection
 
 ### 4. **Supporting Components**
 - **cache**: LRU cache implementation
@@ -93,23 +95,22 @@ handleStream(c *gin.Context)
 │   ├── Query database
 │   └── Call TMDB API if needed
 ├── searchMovieStreams(title, year, apiKey, userConfig)
-│   ├── searchTorrentsOnly(title, "movie", 0, 0, "", year)
+│   ├── performParallelSearch(SearchParams)
 │   │   ├── Concurrent searches:
 │   │   │   ├── YGG.SearchTorrents(query, "movie", 0, 0)
 │   │   │   │   ├── getFrenchTitle(query) // Translates to French
 │   │   │   │   ├── API call to YGG
 │   │   │   │   └── processTorrents() // Filters & sorts
-│   │   │   ├── Apibay.SearchTorrents(query + year, "movie", 0, 0)
-│   │   │   │   ├── Build query with year
-│   │   │   │   ├── API call to Apibay
-│   │   │   │   └── processTorrents() // Filters & sorts
-│   │   │   └── (EZTV not called for movies)
+│   │   │   └── Apibay.SearchTorrents(query + year, "movie", 0, 0)
+│   │   │       ├── Build query with year
+│   │   │       ├── API call to Apibay
+│   │   │       └── processTorrents() // Filters & sorts
 │   │   └── Wait for results with 15s timeout
 │   └── processResults(results, apiKey, userConfig, year, 0, 0)
-│       ├── Process torrents by type
-│       ├── Upload magnets to AllDebrid
-│       ├── CheckMagnets with retry (8 attempts)
-│       └── Create Stream objects
+│       ├── Sequential torrent processing
+│       ├── Upload magnets to AllDebrid one by one
+│       ├── CheckMagnets with retry (2 attempts per torrent)
+│       └── Return first working stream
 └── Return StreamResponse
 ```
 
@@ -120,7 +121,7 @@ handleStream(c *gin.Context) // for tt7678620:3:48
 ├── Parse episode info (season: 3, episode: 48)
 ├── Get TMDB info
 ├── searchSeriesStreams(title, season, episode, apiKey, imdbID, userConfig)
-│   ├── First Search: searchTorrentsWithIMDB(title, "series", 3, 48, apiKey, "tt7678620", userConfig)
+│   ├── First Search: performParallelSearch(SearchParams for season packs)
 │   │   ├── Concurrent searches (15s timeout):
 │   │   │   ├── YGG.SearchTorrents(query, "series", 3, 48)
 │   │   │   │   ├── getFrenchTitle(query)
@@ -128,27 +129,21 @@ handleStream(c *gin.Context) // for tt7678620:3:48
 │   │   │   │   ├── For S3E48: fetch hashes for matching episodes
 │   │   │   │   │   └── Concurrent hash fetching
 │   │   │   │   └── processTorrents()
-│   │   │   ├── Apibay.SearchTorrents(query, "series", 3, 48)
-│   │   │   │   ├── Build query: "name+s03"
-│   │   │   │   ├── API call to Apibay
-│   │   │   │   └── processTorrents()
-│   │   │   └── EZTV.SearchTorrentsByIMDB("tt7678620", 3, 48)
-│   │   │       ├── Strip "tt" prefix → "7678620"
-│   │   │       ├── API call: https://eztvx.to/api/get-torrents?imdb_id=7678620
+│   │   │   └── Apibay.SearchTorrents(query, "series", 3, 48)
+│   │   │       ├── Build query: "name+s03"
+│   │   │       ├── API call to Apibay
 │   │   │       └── processTorrents()
 │   │   └── Combine results from all sources
-│   ├── processResults() → If no working streams found
-│   └── Fallback Search: searchTorrentsWithIMDBSpecificEpisode(title, "series", 3, 48, apiKey, "tt7678620", userConfig)
+│   ├── processResults() → Sequential processing, return first working stream
+│   └── Fallback Search: performParallelSearch(SearchParams for specific episode)
 │       ├── Concurrent searches (15s timeout):
 │       │   ├── YGG.SearchTorrentsSpecificEpisode(query, "series", 3, 48)
 │       │   │   ├── getFrenchTitle(query)
 │       │   │   ├── API call with query: "name+s03e48"
 │       │   │   └── processTorrents() + fetch hashes
-│       │   ├── Apibay.SearchTorrentsSpecificEpisode(query, "series", 3, 48)
-│       │   │   ├── Build query: "name+s03e48"
-│       │   │   └── processTorrents()
-│       │   └── EZTV.SearchTorrentsByIMDB("tt7678620", 3, 48)
-│       │       └── (Same as first search - already episode-specific)
+│       │   └── Apibay.SearchTorrentsSpecificEpisode(query, "series", 3, 48)
+│       │       ├── Build query: "name+s03e48"
+│       │       └── processTorrents()
 │       └── processResults() → Only episode torrents
 └── Return first working stream
     ├── Extract torrents with hashes
@@ -303,8 +298,8 @@ for _, torrent := range allTorrents {
     for attempt := 1; attempt <= 2; attempt++ {
         status := CheckMagnet(hash)
         if status.Ready {
-            // 4. Process ready magnet
-            stream := processSingleReadyMagnet(status, torrent)
+            // 4. Process ready magnet with improved episode matching
+            stream := processSingleReadyMagnet(status, torrent, targetSeason, targetEpisode)
             if stream != nil {
                 return []Stream{stream} // IMMEDIATE RETURN
             }
@@ -318,15 +313,28 @@ for _, torrent := range allTorrents {
 ### Season Pack Episode Extraction
 
 ```go
-// Direct parsing from AllDebrid links
-for _, link := range seasonTorrent.Links {
-    filename := link["filename"]
-    if isVideoFile(filename) {
-        season, episode := parseEpisodeFromFilename(filename)
-        if season == targetSeason && episode == targetEpisode {
-            return unlockLink(link["link"])
+// Improved episode matching logic in processSingleReadyMagnet
+func processSingleReadyMagnet(magnet MagnetStatus, torrent TorrentInfo, targetSeason, targetEpisode int) *Stream {
+    // For season packs: find specific episode file
+    if targetSeason > 0 && targetEpisode > 0 {
+        episodeFile := findEpisodeFile(magnet.Links, targetSeason, targetEpisode)
+        if episodeFile != nil {
+            return createStreamFromFile(episodeFile, torrent)
+        }
+        // Fallback to largest file for season packs
+        largestFile := findLargestFile(magnet.Links)
+        if largestFile != nil {
+            return createStreamFromFile(largestFile, torrent)
         }
     }
+    
+    // For regular torrents: always use largest file
+    largestFile := findLargestFile(magnet.Links)
+    if largestFile != nil {
+        return createStreamFromFile(largestFile, torrent)
+    }
+    
+    return nil
 }
 ```
 
@@ -365,9 +373,9 @@ for _, link := range seasonTorrent.Links {
 - Per-service rate limits
 
 ### 4. **Retry Logic**
-- AllDebrid CheckMagnets: 2 attempts per magnet
+- AllDebrid CheckMagnets: 2 attempts per magnet with 3s delay
 - Sequential processing: Try next magnet if current fails
-- Season torrent handling: Direct link extraction from ready torrents
+- Season torrent handling: Improved episode matching with fallback to largest file
 - Immediate return on first successful stream
 
 ### 5. **Panic Recovery**
@@ -382,7 +390,6 @@ for _, link := range seasonTorrent.Links {
 {
   "TMDB_API_KEY": "...",
   "API_KEY_ALLDEBRID": "...",
-  "FILES_TO_SHOW": 6,
   "RES_TO_SHOW": ["2160p", "1080p", "720p", "480p"],
   "LANG_TO_SHOW": ["MULTI", "VO", "VFF", "VF", "FRENCH"]
 }
@@ -390,7 +397,6 @@ for _, link := range seasonTorrent.Links {
 
 ### 2. **Service Configuration**
 - YGG: 10 requests/second, burst 2
-- EZTV: 5 requests/second, burst 1
 - Apibay: 5 requests/second, burst 2
 - TMDB: 20 requests/second, burst 5
 - AllDebrid: 10 requests/second, burst 2
@@ -426,56 +432,60 @@ for _, link := range seasonTorrent.Links {
 - Includes seeders/leechers for availability sorting
 - Generic torrent processing applies language/resolution filters
 
-## Recent Improvements (v3.0)
+## Recent Improvements (v4.0)
 
-### 1. **Sequential Torrent Processing Revolution**
+### 1. **Code Quality & Architecture Improvements**
+- **Refactored Stream Handler**: Broke down large functions into focused, single-purpose functions
+- **Eliminated Code Duplication**: Replaced 3 nearly identical search functions with 1 generic function
+- **Generic Search Infrastructure**: Created unified search logic with strategy pattern
+- **Improved Error Handling**: Added custom error types with context and type classification
+- **Better File Organization**: Split large model files into domain-specific modules
+
+### 2. **Sequential Torrent Processing Revolution**
 - **Complete Algorithm Redesign**: Changed from bulk magnet processing to sequential torrent processing
 - **Priority-Based Processing**: Processes torrents in quality order (resolution → language → size)
 - **Immediate Response**: Returns the first working stream without processing remaining torrents
-- **No File Limits**: Ignores user's `FilesToShow` setting, processes until success
 - **Smart Prioritization**: Complete Seasons → Episodes → Complete Series for episode requests
+- **No Artificial Limits**: Processes until success, ignoring file count limitations
 
-### 2. **Generic Query Format Implementation**
+### 3. **Generic Query Format Implementation**
 - **Unified Format**: All providers use consistent query format
 - **Movies**: `title+year` (no prefixes)
 - **Series**: `title+sXXeXX` or `title+sXX+complete`
 - **Provider Adaptation**: YGG translates to French, others use format directly
+- **Simplified Processing**: Single path for all content types
 
-### 3. **Enhanced Timeout System**
+### 4. **Enhanced Timeout System**
 - Request-level: 30 seconds (prevents hanging)
 - Search-level: 15 seconds (allows partial results)
 - Rate limiter: 5 seconds (prevents deadlock)
 - Context propagation throughout the stack
 
-### 4. **Intelligent Season Pack Handling**
+### 5. **Intelligent Season Pack Handling**
 - Prioritizes complete season torrents over individual episodes
-- Extracts specific episode from complete seasons when needed
+- Improved episode matching logic with fallback to largest file
 - Direct link parsing (no GetEpisodeFiles API call)
 - Returns only the requested episode or entire season
+- Fixed logic issues with season pack episode extraction
 
-### 5. **User-Defined Quality Prioritization**
+### 6. **User-Defined Quality Prioritization**
 - **Resolution Priority**: Respects user's `RES_TO_SHOW` order
 - **Language Priority**: Respects user's `LANG_TO_SHOW` order (YGG only)
 - **Size Tiebreaking**: Larger files preferred within same quality tier
 - **No Hardcoded Preferences**: All sorting based on user configuration
 
-### 6. **Source Provider Tracking**
-- Stream names show the torrent provider (YGG, EZTV, Apibay)
+### 7. **Source Provider Tracking**
+- Stream names show the torrent provider (YGG, Apibay)
 - Source information preserved through entire processing pipeline
 - Users can see which provider supplied each stream
+- Removed EZTV, now using YGG and Apibay only
 
-### 7. **Simplified Processing Logic**
+### 8. **Simplified Processing Logic**
 - Removed complex batching and file counting
 - Single path for all content types (movies, episodes, seasons)
 - Consistent error handling across all providers
 - Reduced memory usage and API calls
-
-### 8. **Episode-Specific Fallback Search**
-- **Two-Phase Search Strategy**: First search for season packs, then specific episodes
-- **Smart Fallback**: If no working streams from season search, try episode-specific query
-- **Generic Implementation**: Works across all providers (YGG, Apibay, EZTV)
-- **Optimized Queries**: `name+s03` → `name+s03e48` for better results
-- **No Duplicate Processing**: Fallback only triggers when first search yields no working streams
+- Removed unused FILES_TO_SHOW configuration
 
 ## Performance Optimizations
 
@@ -515,10 +525,10 @@ for _, link := range seasonTorrent.Links {
 
 ## Common Issues & Solutions
 
-### 1. **EZTV Results Not Appearing**
-- Check language filter includes "VO"
-- Verify resolution filter includes 720p/1080p
-- Ensure IMDB ID is provided for series
+### 1. **Provider Results Not Appearing**
+- Check language filter includes "VO" for Apibay torrents
+- Verify resolution filter includes appropriate resolutions
+- Ensure proper query format for each provider
 
 ### 2. **Hanging Requests**
 - 30-second request timeout prevents indefinite hangs
@@ -534,10 +544,10 @@ for _, link := range seasonTorrent.Links {
 ### 4. **High Episode Numbers**
 - Episode 48+ supported
 - Pattern matching handles various formats
-- Both YGG and EZTV searched for series
+- Both YGG and Apibay searched for series
 
 ### 5. **Season Pack Handling**
 - Only the best season torrent is processed
-- Specific episode extracted from pack
+- Improved episode matching with fallback logic
 - Direct link parsing for ready torrents
-- No "MAGNET_INVALID_ID" errors
+- Fixed episode extraction logic for season packs

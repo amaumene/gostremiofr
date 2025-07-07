@@ -14,7 +14,6 @@ import (
 type Config struct {
 	TMDBAPIKey       string            `json:"TMDB_API_KEY"`
 	APIKeyAllDebrid  string            `json:"API_KEY_ALLDEBRID"`
-	FilesToShow      int               `json:"FILES_TO_SHOW"`
 	ResToShow        []string          `json:"RES_TO_SHOW"`
 	LangToShow       []string          `json:"LANG_TO_SHOW"`
 	ProviderDebrid   map[string]string `json:"PROVIDER_DEBRID,omitempty"` // provider -> debrid service mapping
@@ -30,7 +29,6 @@ type Config struct {
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		FilesToShow:  constants.DefaultFilesToShow,
 		CacheSize:    constants.DefaultCacheSize,
 		CacheTTL:     time.Duration(constants.DefaultCacheTTL) * time.Hour,
 		DatabasePath: getEnvOrDefault("DATABASE_PATH", "./cache.db"),
@@ -68,10 +66,6 @@ func Load() (*Config, error) {
 func (c *Config) Validate() error {
 	// TMDB_API_KEY is now optional, configured via web interface
 	
-	if c.FilesToShow <= 0 {
-		c.FilesToShow = constants.DefaultFilesToShow
-	}
-	
 	if len(c.ResToShow) == 0 {
 		c.ResToShow = constants.DefaultResolutions
 	}
@@ -79,7 +73,6 @@ func (c *Config) Validate() error {
 	if len(c.LangToShow) == 0 {
 		c.LangToShow = constants.DefaultLanguages
 	}
-	
 	
 	return nil
 }
@@ -176,20 +169,11 @@ func (c *Config) GetDebridForProvider(provider string) string {
 
 // CreateFromUserData creates a config from user-provided data and existing config
 func CreateFromUserData(userConfig map[string]interface{}, baseConfig *Config) *Config {
-	cfg := &Config{
-		FilesToShow: constants.DefaultFilesToShow,
-	}
+	cfg := &Config{}
 	
 	// Copy from existing config if available
 	if baseConfig != nil {
 		*cfg = *baseConfig
-	}
-	
-	// Override with user configuration
-	if val, ok := userConfig["FILES_TO_SHOW"]; ok {
-		if floatVal, ok := val.(float64); ok {
-			cfg.FilesToShow = int(floatVal)
-		}
 	}
 	
 	if val, ok := userConfig["RES_TO_SHOW"]; ok {

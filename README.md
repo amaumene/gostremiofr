@@ -5,15 +5,15 @@ A high-performance Stremio addon for French content, written in Go. This addon i
 ## Features
 
 - 🚀 **High Performance**: Built with Go for optimal speed and low resource usage
-- 🔍 **Multiple Torrent Providers**: Supports YGG, EZTV, and Apibay torrent sources
+- 🔍 **Multiple Torrent Providers**: Supports YGG and Apibay torrent sources
 - 🎬 **TMDB Integration**: Automatic metadata enrichment with French titles
 - 📚 **Built-in Catalogs**: Self-sufficient with popular, trending, and search catalogs
 - 📺 **Full Series Support**: Complete episode listings with season/episode metadata
-- 💾 **Smart Caching**: Built-in LRU cache and BoltHold database for faster responses
+- 💾 **Smart Caching**: Built-in LRU cache and BoltDB database for faster responses
 - 🔐 **Secure API Handling**: Sanitized and validated API keys with masked logging
 - 🌐 **AllDebrid Integration**: Stream torrents through AllDebrid for better performance
 - 📊 **Intelligent Sorting**: Prioritizes streams by resolution, language, and availability
-- 🏷️ **Source Tracking**: Stream results show the original torrent provider (YGG, EZTV, Apibay)
+- 🏷️ **Source Tracking**: Stream results show the original torrent provider (YGG, Apibay)
 - 🇫🇷 **French-Focused**: Catalogs and metadata optimized for French content
 - ⚡ **Sequential Processing**: Processes torrents one-by-one in quality order until a working stream is found
 - 📦 **Season Pack Support**: Intelligently extracts specific episodes from complete season torrents
@@ -65,7 +65,7 @@ docker run -p 5001:5001 \
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `LOG_LEVEL` | Logging level (debug, info, warn, error) | `info` |
-| `DATABASE_DIR` | Directory for BoltHold database | `.` |
+| `DATABASE_DIR` | Directory for BoltDB database | `.` |
 | `PORT` | Server port | `5001` |
 | `TMDB_API_KEY` | TMDB API key for metadata | - |
 | `API_KEY_ALLDEBRID` | Default AllDebrid API key | - |
@@ -80,8 +80,7 @@ docker run -p 5001:5001 \
 
 2. Enter your configuration:
    - **TMDB API Key**: For movie/series metadata
-   - **Files to Show**: Number of streams to display (default: 6)
-   - **Resolutions**: Preferred resolutions in order (e.g., "1080p,720p,480p")
+   - **Resolutions**: Preferred resolutions in order (e.g., "2160p,1080p,720p,480p")
    - **Languages**: Preferred languages (e.g., "MULTI,FRENCH,VOSTFR")
    - **AllDebrid API Key**: Your AllDebrid API key
 
@@ -129,15 +128,22 @@ gostremiofr/
 ├── cmd/gostremiofr/    # Application entry point
 ├── internal/            # Internal packages
 │   ├── config/         # Configuration management
+│   ├── constants/      # Application constants
+│   ├── errors/         # Custom error types
 │   ├── handlers/       # HTTP request handlers
 │   ├── services/       # External service integrations
-│   ├── models/         # Data models
+│   ├── models/         # Data models (organized by domain)
+│   │   ├── stream_models.go      # Stremio stream responses
+│   │   ├── torrent_models.go     # Torrent processing models
+│   │   ├── tmdb_models.go        # TMDB API responses
+│   │   ├── alldebrid_models.go   # AllDebrid API responses
+│   │   └── stremio_models.go     # Stremio protocol models
 │   ├── cache/          # Caching implementation
 │   └── database/       # Database operations
 ├── pkg/                # Public packages
 │   ├── logger/         # Custom logging
 │   ├── security/       # Security utilities
-│   └── alldebrid/      # AllDebrid client
+│   └── helpers/        # Helper functions
 └── docs/               # Documentation
 ```
 
@@ -146,11 +152,10 @@ gostremiofr/
 - **Handlers**: Process Stremio requests and coordinate services
 - **Services**: 
   - `YGG`: Searches YGG torrent tracker (French content)
-  - `EZTV`: Searches EZTV for TV series (English content)
   - `Apibay`: Searches The Pirate Bay API (International content)
   - `TMDB`: Fetches movie/series metadata
   - `AllDebrid`: Manages torrent downloads and streaming
-- **Cache**: LRU memory cache + BoltHold embedded database for persistence
+- **Cache**: LRU memory cache + BoltDB embedded database for persistence
 - **Security**: API key validation and sanitization
 
 ## Development
@@ -203,7 +208,7 @@ Set the log level using the `LOG_LEVEL` environment variable.
 
 - **Caching**: TMDB results are cached for 24 hours to reduce API calls
 - **Rate Limiting**: Built-in rate limiters for all external APIs
-- **Concurrent Torrent Search**: Parallel searches across YGG, EZTV, and Apibay with 15-second timeout
+- **Concurrent Torrent Search**: Parallel searches across YGG and Apibay with 15-second timeout
 - **Database Optimization**: Indexed queries for fast lookups
 - **Sequential Torrent Processing**: Processes best torrents one-by-one until a working stream is found
 - **Smart Season Pack Handling**: Extracts only requested episodes from complete seasons
@@ -262,7 +267,7 @@ Benefits:
 3. **Database errors**
    - Ensure write permissions for database directory (`DATABASE_DIR`)
    - Check disk space availability
-   - BoltHold database file will be created as `data.db` in the specified directory
+   - BoltDB database file will be created as `data.db` in the specified directory
 
 ### Debug Mode
 
@@ -271,6 +276,27 @@ Enable debug logging for detailed information:
 ```bash
 LOG_LEVEL=debug ./gostremiofr
 ```
+
+## Recent Improvements (v4.0)
+
+### Code Quality & Maintainability
+- **Refactored stream handler**: Broke down large functions into focused, single-purpose functions
+- **Eliminated code duplication**: Replaced 3 nearly identical search functions with 1 generic function
+- **Improved error handling**: Added custom error types with context and type classification
+- **Enhanced documentation**: Added comprehensive comments and package documentation
+- **Simplified configuration**: Removed unused `FILES_TO_SHOW` configuration
+- **Better file organization**: Split large model files into domain-specific modules
+
+### Technical Improvements
+- **Generic search infrastructure**: Unified search logic with strategy pattern
+- **Helper functions**: Extracted common patterns into reusable utilities
+- **Constants management**: Centralized magic numbers and timeouts
+- **Streamlined processing**: Reduced code size by ~25% while maintaining functionality
+
+### Fixed Logic Issues
+- **Episode matching**: Corrected season pack processing to properly match target episodes
+- **Search prioritization**: Improved episode file detection in season torrents
+- **Error handling**: Better error propagation and logging throughout the pipeline
 
 ## Contributing
 
@@ -289,7 +315,7 @@ This project is licensed under the GPL-3.0 License - see the [LICENSE](LICENSE) 
 ## Acknowledgments
 
 - Stremio team for the addon protocol
-- YGG and EZTV communities
+- YGG community for French content
 - AllDebrid for their service
 - TMDB for movie/series metadata
 

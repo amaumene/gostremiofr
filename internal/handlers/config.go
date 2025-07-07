@@ -100,7 +100,6 @@ func (h *Handler) handleConfig(c *gin.Context) {
           const decodedConfig = JSON.parse(atob(encodedConfig));
 
           document.getElementById('tmdb').value = decodedConfig.TMDB_API_KEY || "";
-          document.getElementById('files').value = decodedConfig.FILES_TO_SHOW || 10;
           document.getElementById('res').value = (decodedConfig.RES_TO_SHOW || []).join(",");
           document.getElementById('lang').value = (decodedConfig.LANG_TO_SHOW || []).join(",");
           document.getElementById('alldebrid').value = decodedConfig.API_KEY_ALLDEBRID || "";
@@ -120,7 +119,6 @@ func (h *Handler) handleConfig(c *gin.Context) {
     function generateConfig() {
       const config = {
         TMDB_API_KEY: document.getElementById('tmdb').value,
-        FILES_TO_SHOW: parseInt(document.getElementById('files').value),
         RES_TO_SHOW: document.getElementById('res').value.split(',').map(s => s.trim()).filter(s => s),
         LANG_TO_SHOW: document.getElementById('lang').value.split(',').map(s => s.trim()).filter(s => s),
         API_KEY_ALLDEBRID: document.getElementById('alldebrid').value,
@@ -166,9 +164,6 @@ func (h *Handler) handleConfig(c *gin.Context) {
     <h1>Configuration GoStremioFR</h1>
     <label for="tmdb">Clé API TMDB</label>
     <input type="text" id="tmdb" placeholder="Entrez votre clé API TMDB">
-    
-    <label for="files">Nombre de fichiers à afficher</label>
-    <input type="number" id="files" value="10" min="1" max="50">
     
     <label for="res">Résolutions (séparées par une virgule)</label>
     <input type="text" id="res" value="2160p,1080p,720p,480p" placeholder="Ex: 2160p,1080p,720p">

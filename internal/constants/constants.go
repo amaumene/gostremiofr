@@ -8,7 +8,6 @@ const (
 	AddonDescription = "French torrent addon with YGG, EZTV, AllDebrid integration and TMDB catalogs"
 
 	// Default configuration values
-	DefaultFilesToShow = 10
 	DefaultPort        = "5000"
 	DefaultLogLevel    = "info"
 

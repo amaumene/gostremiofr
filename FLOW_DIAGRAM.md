@@ -36,22 +36,23 @@
          │
          ▼
 ┌─────────────────────────────────────────────────────────────┐
-│           searchTorrentsWithIMDB()                           │
+│                performParallelSearch()                       │
 │  Concurrent searches with 15s timeout                       │
 ├─────────────────────┬──────────────────────────────────────┤
 │                     │                                       │
 ▼                     ▼                                       │
 ┌──────────────┐     ┌──────────────┐                       │
-│     YGG      │     │    EZTV      │                       │
+│     YGG      │     │    Apibay    │                       │
 │              │     │              │                       │
-│ 1. Get French│     │ 1. Strip "tt"│                       │
-│    title     │     │ 2. API call  │                       │
-│ 2. API call  │     │ 3. Returns   │                       │
-│ 3. For S3E48:│     │    torrents  │                       │
-│    fetch hash│     │    with hash │                       │
-│ 4. Filter &  │     │ 4. Filter &  │                       │
-│    sort      │     │    sort      │                       │
-└──────┬───────┘     └──────┬───────┘                       │
+│ 1. Get French│     │ 1. Generic   │                       │
+│    title     │     │    query     │                       │
+│ 2. API call  │     │ 2. API call  │                       │
+│ 3. For S3E48:│     │ 3. Returns   │                       │
+│    fetch hash│     │    torrents  │                       │
+│ 4. Filter &  │     │    with hash │                       │
+│    sort      │     │ 4. Filter &  │                       │
+└──────┬───────┘     │    sort      │                       │
+       │             └──────┬───────┘                       │
        │                    │                                │
        └────────────────────┴────────────────────────────────┘
                             │
@@ -76,10 +77,10 @@
 │     - Upload each magnet                                   │
 │     - Wait 2 seconds                                       │
 │                                                             │
-│  3. Check Magnet Status (8 attempts):                      │
-│     - Attempt 1: Check immediately                         │
-│     - Not ready? Wait 2s, check again                      │
-│     - Progressive backoff up to 14s                        │
+│  3. Sequential Processing:                                  │
+│     - Process torrents one by one in quality order         │
+│     - Check each magnet (2 attempts with 3s delay)         │
+│     - Return first working stream immediately               │
 │                                                             │
 │  4. Create Streams:                                        │
 │     - Only from ready magnets                              │
@@ -105,7 +106,7 @@
 ┌─────────────────────────────────────┐
 │ Filter 1: Language                  │
 │ - Check against LANG_TO_SHOW        │
-│ - EZTV = "VO", YGG = parse title   │
+│ - Apibay = "VO", YGG = parse title │
 │ - Pass if matches or no filter     │
 └────────┬────────────────────────────┘
          │ Passed
@@ -120,8 +121,8 @@
          ▼
 ┌─────────────────────────────────────┐
 │ Classification                      │
-│ - EZTV: Use API season/episode      │
-│ - YGG: Parse from title patterns    │
+│ - Generic classification logic      │
+│ - Parse from title patterns         │
 │ - Classify as:                      │
 │   • movie                           │
 │   • episode (S3E48)                 │
@@ -157,36 +158,35 @@
          ▼
 ┌──────────────────────────────────────┐
 │ Extract Magnets                      │
-│ - EZTV: Use provided hash            │
+│ - Apibay: Use provided hash          │
 │ - YGG: Fetch hash if missing         │
-│ - Limit to 30 magnets                │
+│ - Sequential processing (no limits)  │
 └────────┬─────────────────────────────┘
          │
          ▼
 ┌──────────────────────────────────────┐
-│ Group by Provider                    │
-│ - ygg: [magnet1, magnet2...]         │
-│ - eztv: [magnet3, magnet4...]        │
+│ Sequential Processing                │
+│ - Process torrents one by one        │
+│ - In quality order (res, lang, size) │
 └────────┬─────────────────────────────┘
          │
          ▼
 ┌──────────────────────────────────────┐
-│ For Each Provider Group:             │
+│ For Each Torrent (in order):        │
 │                                      │
 │ 1. Upload Phase:                     │
 │    POST /magnet/upload               │
-│    - Send each magnet                │
+│    - Send single magnet              │
 │    - Log success/failure             │
 │                                      │
 │ 2. Wait 2 seconds                    │
 │                                      │
-│ 3. Check Phase (8 attempts):        │
+│ 3. Check Phase (2 attempts):        │
 │    POST /magnet/status               │
-│    - Send magnet hashes              │
 │    - Check if ready                  │
-│    - If not ready:                   │
-│      • Attempt 1-8: wait n*2 sec    │
-│      • Retry check                   │
+│    - If ready: process & return      │
+│    - If not ready: wait 3s, retry   │
+│    - If still not ready: next torrent│
 └────────┬─────────────────────────────┘
          │
          ▼
@@ -223,7 +223,7 @@
          ▼
 ┌─────────────────────────────────────┐
 │ Fetch from External API             │
-│ - YGG/EZTV/TMDB/AllDebrid          │
+│ - YGG/Apibay/TMDB/AllDebrid         │
 │ - Update both caches                │
 │ - Return result                     │
 └─────────────────────────────────────┘
@@ -244,7 +244,7 @@
 │ ┌────────────────────────────┐ │
 │ │ 15s Search Timeout         │ │◄──── Partial Results
 │ ├────────────────────────────┤ │
-│ │ YGG Search    │ EZTV Search│ │
+│ │ YGG Search  │ Apibay Search│ │
 │ │ - Panic recovery           │ │◄──── Crash Protection
 │ │ - Error logging            │ │
 │ └────────────────────────────┘ │
@@ -267,17 +267,12 @@
 User Config
 ├── LANG_TO_SHOW: ["MULTI", "VO", "VFF", "VF", "FRENCH"]
 │   └── Affects: Torrent filtering in ProcessTorrents()
-│       - EZTV torrents tagged as "VO"
+│       - Apibay torrents tagged as "VO"
 │       - YGG torrents parsed from title
 │
 ├── RES_TO_SHOW: ["2160p", "1080p", "720p", "480p"]
 │   └── Affects: Resolution filtering after classification
-│       - Can filter out all EZTV if only 4K selected
-│
-├── FILES_TO_SHOW: 6
-│   └── Affects: 
-│       - Max YGG torrents to fetch hashes for
-│       - Max streams returned to user
+│       - Priority order for torrent sorting
 │
 ├── API_KEY_ALLDEBRID: "..."
 │   └── Required for:

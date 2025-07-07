@@ -15,7 +15,6 @@ type Config struct {
 	LangToShow        []string `json:"LANG_TO_SHOW"`
 	SourcePriority    []string `json:"SOURCE_PRIORITY"`
 	ResolutionToShow  []string `json:"RESOLUTION_TO_SHOW"`
-	FilesToShow       int      `json:"FILES_TO_SHOW"`
 	TimeToKeepTorrent int      `json:"TIME_TO_KEEP_TORRENT"`
 }
 
