@@ -1,3 +1,6 @@
+// Package handlers implements HTTP request handlers for the Stremio addon.
+// The stream handler is the core component that processes stream requests,
+// searches torrents from multiple providers, and generates playable streams through AllDebrid.
 package handlers
 
 import (
@@ -7,7 +10,6 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,107 +18,155 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/amaumene/gostremiofr/internal/config"
 	"github.com/amaumene/gostremiofr/internal/constants"
+	"github.com/amaumene/gostremiofr/internal/errors"
 	"github.com/amaumene/gostremiofr/internal/models"
 	"github.com/amaumene/gostremiofr/internal/services"
 )
 
 var (
+	// imdbIDRegex matches IMDB ID format (e.g., "tt1234567")
 	imdbIDRegex = regexp.MustCompile(`^tt\d+$`)
+	// episodeRegex matches episode ID format (e.g., "tt1234567:1:5" for season 1, episode 5)
 	episodeRegex = regexp.MustCompile(`^tt\d+:(\d+):(\d+)$`)
 )
 
+// handleStream processes stream requests for movies and TV series.
+// It handles configuration parsing, API key extraction, TMDB metadata fetching,
+// torrent searching, and stream generation through AllDebrid.
+//
+// URL format: /stream/{configuration}/{id}
+// - configuration: base64-encoded JSON containing user preferences and API keys
+// - id: IMDB ID (movies) or IMDB:season:episode (TV series)
 func (h *Handler) handleStream(c *gin.Context) {
-	// Add 30-second timeout for the entire request
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), constants.RequestTimeout)
 	defer cancel()
 	
-	// Monitor timeout
-	go func() {
-		<-ctx.Done()
-		if ctx.Err() == context.DeadlineExceeded {
-			h.services.Logger.Errorf("[StreamHandler] request timeout for ID: %s", c.Param("id"))
-		}
-	}()
+	h.monitorTimeout(ctx, c.Param("id"))
 	
-	configuration := c.Param("configuration")
-	id := c.Param("id")
-	
-	var userConfig map[string]interface{}
-	if data, err := base64.StdEncoding.DecodeString(configuration); err == nil {
-		json.Unmarshal(data, &userConfig)
-	}
-	
-	// Extract AllDebrid API key
-	apiKey := ""
-	if val, ok := userConfig["API_KEY_ALLDEBRID"]; ok {
-		if str, ok := val.(string); ok {
-			apiKey = str
-		}
-	}
-	if apiKey == "" && h.config != nil {
-		apiKey = h.config.APIKeyAllDebrid
-	}
+	userConfig := h.parseUserConfiguration(c.Param("configuration"))
+	apiKey := h.extractAPIKey(userConfig, "API_KEY_ALLDEBRID")
 	
 	if apiKey == "" {
+		err := errors.NewAPIKeyMissingError("AllDebrid")
+		h.services.Logger.Warnf("[StreamHandler] %v", err)
 		c.JSON(http.StatusOK, models.StreamResponse{Streams: []models.Stream{}})
 		return
 	}
 	
-	// Extract TMDB API key and update service if available
-	tmdbAPIKey := ""
-	if val, ok := userConfig["TMDB_API_KEY"]; ok {
-		if str, ok := val.(string); ok {
-			tmdbAPIKey = str
-		}
-	}
-	if tmdbAPIKey == "" && h.config != nil {
-		tmdbAPIKey = h.config.TMDBAPIKey
-	}
+	h.configureTMDBService(userConfig)
 	
-	// Update TMDB service with the API key if available
-	if tmdbAPIKey != "" && h.services.TMDB != nil {
-		if tmdb, ok := h.services.TMDB.(*services.TMDB); ok {
-			tmdb.SetAPIKey(tmdbAPIKey)
-		}
-	}
-	
-	imdbID, season, episode := parseStreamID(id)
+	imdbID, season, episode := parseStreamID(c.Param("id"))
 	if imdbID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID format"})
+		err := errors.NewInvalidIDError(c.Param("id"))
+		h.services.Logger.Errorf("[StreamHandler] %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	
-	// Create config from user configuration and defaults
 	userConfigStruct := config.CreateFromUserData(userConfig, h.config)
+	h.configureTorrentServices(userConfigStruct)
 	
-	// Set config for services that need it
-	if h.services.EZTV != nil {
-		h.services.EZTV.SetConfig(userConfigStruct)
-	}
-	if h.services.YGG != nil {
-		h.services.YGG.SetConfig(userConfigStruct)
-	}
-	
-	mediaType, title, _, year, err := h.services.TMDB.GetIMDBInfo(imdbID)
+	mediaType, title, year, err := h.getMediaInfo(imdbID)
 	if err != nil {
-		h.services.Logger.Errorf("[StreamHandler] failed to get TMDB info for %s: %v", imdbID, err)
+		tmdbErr := errors.NewTMDBError(fmt.Sprintf("failed to get info for %s", imdbID), err)
+		h.services.Logger.Errorf("[StreamHandler] %v", tmdbErr)
 		c.JSON(http.StatusOK, models.StreamResponse{Streams: []models.Stream{}})
 		return
 	}
 	
 	h.services.Logger.Infof("[StreamHandler] processing %s request - %s (%s)", mediaType, title, imdbID)
 	
-	var streams []models.Stream
-	
-	if mediaType == "movie" {
-		streams = h.searchMovieStreams(title, year, apiKey, userConfigStruct)
-	} else if mediaType == "series" {
-		streams = h.searchSeriesStreams(title, season, episode, apiKey, imdbID, userConfigStruct)
-	}
-	
+	streams := h.searchStreams(mediaType, title, year, season, episode, apiKey, imdbID, userConfigStruct)
 	c.JSON(http.StatusOK, models.StreamResponse{Streams: streams})
 }
 
+// monitorTimeout monitors request timeout and logs timeout events.
+// This helps with debugging timeout issues in production.
+func (h *Handler) monitorTimeout(ctx context.Context, id string) {
+	go func() {
+		<-ctx.Done()
+		if ctx.Err() == context.DeadlineExceeded {
+			timeoutErr := errors.NewTimeoutError(fmt.Sprintf("request processing for ID: %s", id))
+			h.services.Logger.Errorf("[StreamHandler] %v", timeoutErr)
+		}
+	}()
+}
+
+// parseUserConfiguration decodes base64-encoded user configuration.
+// The configuration contains user preferences, API keys, and other settings.
+func (h *Handler) parseUserConfiguration(configuration string) map[string]interface{} {
+	var userConfig map[string]interface{}
+	if data, err := base64.StdEncoding.DecodeString(configuration); err == nil {
+		json.Unmarshal(data, &userConfig)
+	}
+	return userConfig
+}
+
+// extractAPIKey extracts API keys from user configuration with fallback to server config.
+// Supports both user-provided keys and server-wide defaults.
+func (h *Handler) extractAPIKey(userConfig map[string]interface{}, keyName string) string {
+	if val, ok := userConfig[keyName]; ok {
+		if str, ok := val.(string); ok {
+			return str
+		}
+	}
+	
+	switch keyName {
+	case "API_KEY_ALLDEBRID":
+		if h.config != nil {
+			return h.config.APIKeyAllDebrid
+		}
+	case "TMDB_API_KEY":
+		if h.config != nil {
+			return h.config.TMDBAPIKey
+		}
+	}
+	
+	return ""
+}
+
+// configureTMDBService updates the TMDB service with user-provided API key.
+// This allows users to use their own TMDB API keys for higher rate limits.
+func (h *Handler) configureTMDBService(userConfig map[string]interface{}) {
+	tmdbAPIKey := h.extractAPIKey(userConfig, "TMDB_API_KEY")
+	if tmdbAPIKey != "" && h.services.TMDB != nil {
+		if tmdb, ok := h.services.TMDB.(*services.TMDB); ok {
+			tmdb.SetAPIKey(tmdbAPIKey)
+		}
+	}
+}
+
+// configureTorrentServices applies user configuration to torrent search services.
+// This includes language preferences, quality settings, and provider preferences.
+func (h *Handler) configureTorrentServices(userConfig *config.Config) {
+	if h.services.YGG != nil {
+		h.services.YGG.SetConfig(userConfig)
+	}
+	if h.services.Apibay != nil {
+		h.services.Apibay.SetConfig(userConfig)
+	}
+}
+
+// getMediaInfo fetches media metadata from TMDB using IMDB ID.
+// Returns media type (movie/series), title, year, and any errors.
+func (h *Handler) getMediaInfo(imdbID string) (string, string, int, error) {
+	mediaType, title, _, year, err := h.services.TMDB.GetIMDBInfo(imdbID)
+	return mediaType, title, year, err
+}
+
+// searchStreams orchestrates the search process based on media type.
+// Routes to appropriate search methods for movies vs TV series.
+func (h *Handler) searchStreams(mediaType, title string, year, season, episode int, apiKey, imdbID string, userConfig *config.Config) []models.Stream {
+	if mediaType == "movie" {
+		return h.searchMovieStreams(title, year, apiKey, userConfig)
+	} else if mediaType == "series" {
+		return h.searchSeriesStreams(title, season, episode, apiKey, imdbID, userConfig)
+	}
+	return []models.Stream{}
+}
+
+// searchMovieStreams searches for movie torrents and processes them through AllDebrid.
+// Uses the title and year to find appropriate torrents from configured providers.
 func (h *Handler) searchMovieStreams(title string, year int, apiKey string, userConfig *config.Config) []models.Stream {
 	// Search with original title only - YGG service will handle French title conversion internally
 	results := h.searchTorrentsOnly(title, "movie", 0, 0, "", year)
@@ -127,13 +177,55 @@ func (h *Handler) searchMovieStreams(title string, year int, apiKey string, user
 	return h.processResults(results, apiKey, userConfig, year, 0, 0)
 }
 
+// searchSeriesStreams implements a two-phase search strategy for TV series:
+// 1. Prioritize complete season packs (better quality, contains target episode)
+// 2. Fallback to specific episode searches if season packs don't work
+// This approach maximizes success rate while preferring higher quality sources.
 func (h *Handler) searchSeriesStreams(title string, season, episode int, apiKey, imdbID string, userConfig *config.Config) []models.Stream {
-	// Search with original title only - YGG service will handle French title conversion internally
-	return h.searchTorrentsWithIMDB(title, "series", season, episode, apiKey, imdbID, userConfig)
+	// First search: Prioritize complete seasons (season packs)
+	h.services.Logger.Infof("[StreamHandler] starting first search prioritizing complete seasons for s%02d", season)
+	streams := h.searchTorrentsWithIMDB(title, "series", season, episode, apiKey, imdbID, userConfig)
+	
+	// If we found working streams, return them
+	if len(streams) > 0 {
+		return streams
+	}
+	
+	// Second search: If no working streams found and we're looking for a specific episode,
+	// fallback to searching for specific episodes
+	if season > 0 && episode > 0 {
+		h.services.Logger.Infof("[StreamHandler] no working streams from season search, trying episode-specific search for s%02de%02d", season, episode)
+		streams = h.searchTorrentsWithIMDBSpecificEpisode(title, "series", season, episode, apiKey, imdbID, userConfig)
+		
+		// If specific episode search also fails, try a broader search with just the title
+		if len(streams) == 0 {
+			h.services.Logger.Infof("[StreamHandler] episode-specific search also failed, trying broader title search")
+			broadResults := h.searchTorrentsOnly(title, "series", 0, 0, "", 0)
+			if broadResults != nil && len(broadResults.EpisodeTorrents) > 0 {
+				// Filter for matching episodes during processing
+				streams = h.processResults(broadResults, apiKey, userConfig, 0, season, episode)
+			}
+		}
+	}
+	
+	return streams
 }
 
 func (h *Handler) searchTorrents(query string, mediaType string, season, episode int, apiKey string) []models.Stream {
 	return h.searchTorrentsWithIMDB(query, mediaType, season, episode, apiKey, "", nil)
+}
+
+// searchTorrentsWithIMDBSpecificEpisode searches for a specific episode only (fallback when season search fails)
+func (h *Handler) searchTorrentsWithIMDBSpecificEpisode(query string, mediaType string, season, episode int, apiKey string, imdbID string, userConfig *config.Config) []models.Stream {
+	h.services.Logger.Debugf("[StreamHandler] specific episode search initiated - query: %s, s%02de%02d", query, season, episode)
+	
+	// Search specifically for the episode
+	results := h.searchTorrentsOnlySpecificEpisode(query, mediaType, season, episode, imdbID, 0)
+	
+	h.services.Logger.Infof("[StreamHandler] specific episode search results - episodes: %d", len(results.EpisodeTorrents))
+	
+	// Process only episode torrents (no season packs in this search)
+	return h.processResults(results, apiKey, userConfig, 0, season, episode)
 }
 
 func (h *Handler) searchTorrentsWithIMDB(query string, mediaType string, season, episode int, apiKey string, imdbID string, userConfig *config.Config) []models.Stream {
@@ -144,16 +236,10 @@ func (h *Handler) searchTorrentsWithIMDB(query string, mediaType string, season,
 	var mu sync.Mutex
 	
 	// Create timeout channel for search operations
-	searchTimeout := 15 * time.Second
+	searchTimeout := constants.SearchTimeout
 	done := make(chan bool)
 	
-	goroutineCount := 1
-	if mediaType == "series" && imdbID != "" {
-		goroutineCount = 2 // Add EZTV for series
-		h.services.Logger.Debugf("[StreamHandler] EZTV search enabled for series - goroutineCount: %d", goroutineCount)
-	} else {
-		h.services.Logger.Debugf("[StreamHandler] EZTV search disabled - mediaType: %s, imdbID: %s", mediaType, imdbID)
-	}
+	goroutineCount := constants.TorrentSearchGoroutines
 	
 	wg.Add(goroutineCount)
 	
@@ -195,47 +281,44 @@ func (h *Handler) searchTorrentsWithIMDB(query string, mediaType string, season,
 		}
 	}()
 	
-	
-	// Add EZTV search for series with IMDB ID
-	if mediaType == "series" && imdbID != "" {
-		go func() {
-			defer wg.Done()
-			defer func() {
-				if r := recover(); r != nil {
-					h.services.Logger.Errorf("[StreamHandler] EZTV search panic recovered: %v", r)
-				}
-			}()
-			
-			h.services.Logger.Infof("[StreamHandler] EZTV search started for IMDB ID: %s, S%dE%d", imdbID, season, episode)
-			results, err := h.services.EZTV.SearchTorrentsByIMDB(imdbID, season, episode)
-			if err != nil {
-				h.services.Logger.Errorf("[StreamHandler] failed to search EZTV: %v", err)
-				return
-			}
-			
-			if results != nil {
-				h.services.Logger.Infof("[StreamHandler] EZTV results - complete series: %d, seasons: %d, episodes: %d", 
-					len(results.CompleteSeriesTorrents), 
-					len(results.CompleteSeasonTorrents), 
-					len(results.EpisodeTorrents))
-				mu.Lock()
-				for _, t := range results.CompleteSeriesTorrents {
-					combinedResults.CompleteSeriesTorrents = append(combinedResults.CompleteSeriesTorrents, t)
-				}
-				for _, t := range results.CompleteSeasonTorrents {
-					combinedResults.CompleteSeasonTorrents = append(combinedResults.CompleteSeasonTorrents, t)
-				}
-				for _, t := range results.EpisodeTorrents {
-					combinedResults.EpisodeTorrents = append(combinedResults.EpisodeTorrents, t)
-				}
-				mu.Unlock()
-			} else {
-				h.services.Logger.Debugf("[StreamHandler] EZTV returned no results for IMDB ID: %s", imdbID)
+	// Add Apibay search
+	go func() {
+		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				h.services.Logger.Errorf("[StreamHandler] Apibay search panic recovered: %v", r)
 			}
 		}()
-	} else {
-		h.services.Logger.Debugf("[StreamHandler] skipping EZTV search - mediaType: %s, imdbID: %s", mediaType, imdbID)
-	}
+		
+		// Use query as-is for Apibay (no year info available in this function)
+		apibayQuery := query
+		
+		h.services.Logger.Infof("[StreamHandler] Apibay search started - query: %s, mediaType: %s, season: %d, episode: %d", apibayQuery, mediaType, season, episode)
+		results, err := h.services.Apibay.SearchTorrents(apibayQuery, mediaType, season, episode)
+		if err != nil {
+			h.services.Logger.Errorf("[StreamHandler] failed to search Apibay: %v", err)
+			return
+		}
+		
+		if results != nil {
+			mu.Lock()
+			for _, t := range results.MovieTorrents {
+				combinedResults.MovieTorrents = append(combinedResults.MovieTorrents, t)
+			}
+			for _, t := range results.CompleteSeriesTorrents {
+				combinedResults.CompleteSeriesTorrents = append(combinedResults.CompleteSeriesTorrents, t)
+			}
+			for _, t := range results.CompleteSeasonTorrents {
+				combinedResults.CompleteSeasonTorrents = append(combinedResults.CompleteSeasonTorrents, t)
+			}
+			for _, t := range results.EpisodeTorrents {
+				combinedResults.EpisodeTorrents = append(combinedResults.EpisodeTorrents, t)
+			}
+			mu.Unlock()
+		} else {
+			h.services.Logger.Debugf("[StreamHandler] Apibay returned no results")
+		}
+	}()
 	
 	// Wait for searches with timeout
 	go func() {
@@ -258,7 +341,7 @@ func (h *Handler) searchTorrentsWithIMDB(query string, mediaType string, season,
 	
 	// Log episode torrents for debugging
 	for i, torrent := range combinedResults.EpisodeTorrents {
-		if i < 5 { // Log first 5
+		if i < constants.MaxEpisodeTorrentsToLog {
 			h.services.Logger.Infof("[StreamHandler] episode torrent %d: %s (source: %s, hash: %s)", i+1, torrent.Title, torrent.Source, torrent.Hash)
 		}
 	}
@@ -273,11 +356,11 @@ func (h *Handler) searchTorrentsOnly(query, mediaType string, season, episode in
 	combinedResults := models.CombinedTorrentResults{}
 	
 	// Create timeout channel for search operations
-	searchTimeout := 15 * time.Second
+	searchTimeout := constants.SearchTimeout
 	done := make(chan bool)
 	
 	// Add YGG search
-	wg.Add(1)
+	wg.Add(constants.TorrentSearchGoroutines)
 	go func() {
 		defer wg.Done()
 		defer func() {
@@ -316,47 +399,54 @@ func (h *Handler) searchTorrentsOnly(query, mediaType string, season, episode in
 		}
 	}()
 	
-	// Add EZTV search for series with IMDB ID
-	if mediaType == "series" && imdbID != "" {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			defer func() {
-				if r := recover(); r != nil {
-					h.services.Logger.Errorf("[StreamHandler] EZTV search panic recovered: %v", r)
-				}
-			}()
-			
-			h.services.Logger.Infof("[StreamHandler] EZTV search started for IMDB ID: %s, S%dE%d", imdbID, season, episode)
-			results, err := h.services.EZTV.SearchTorrentsByIMDB(imdbID, season, episode)
-			if err != nil {
-				h.services.Logger.Errorf("[StreamHandler] failed to search EZTV: %v", err)
-				return
-			}
-			
-			if results != nil {
-				h.services.Logger.Infof("[StreamHandler] EZTV results - complete series: %d, seasons: %d, episodes: %d", 
-					len(results.CompleteSeriesTorrents), 
-					len(results.CompleteSeasonTorrents), 
-					len(results.EpisodeTorrents))
-				mu.Lock()
-				for _, t := range results.CompleteSeriesTorrents {
-					combinedResults.CompleteSeriesTorrents = append(combinedResults.CompleteSeriesTorrents, t)
-				}
-				for _, t := range results.CompleteSeasonTorrents {
-					combinedResults.CompleteSeasonTorrents = append(combinedResults.CompleteSeasonTorrents, t)
-				}
-				for _, t := range results.EpisodeTorrents {
-					combinedResults.EpisodeTorrents = append(combinedResults.EpisodeTorrents, t)
-				}
-				mu.Unlock()
-			} else {
-				h.services.Logger.Debugf("[StreamHandler] EZTV returned no results for IMDB ID: %s", imdbID)
+	// Add Apibay search
+	go func() {
+		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				h.services.Logger.Errorf("[StreamHandler] Apibay search panic recovered: %v", r)
 			}
 		}()
-	} else {
-		h.services.Logger.Debugf("[StreamHandler] skipping EZTV search - mediaType: %s, imdbID: %s", mediaType, imdbID)
-	}
+		
+		// Build query with year for movies
+		apibayQuery := query
+		if mediaType == "movie" && year > 0 {
+			apibayQuery = fmt.Sprintf("%s %d", query, year)
+		}
+		
+		h.services.Logger.Infof("[StreamHandler] Apibay search started - query: %s, mediaType: %s, season: %d, episode: %d", apibayQuery, mediaType, season, episode)
+		results, err := h.services.Apibay.SearchTorrents(apibayQuery, mediaType, season, episode)
+		if err != nil {
+			h.services.Logger.Errorf("[StreamHandler] failed to search Apibay: %v", err)
+			return
+		}
+		
+		if results != nil {
+			h.services.Logger.Infof("[StreamHandler] Apibay results - movies: %d, complete series: %d, seasons: %d, episodes: %d", 
+				len(results.MovieTorrents), 
+				len(results.CompleteSeriesTorrents), 
+				len(results.CompleteSeasonTorrents), 
+				len(results.EpisodeTorrents))
+			
+			mu.Lock()
+			for _, t := range results.MovieTorrents {
+				combinedResults.MovieTorrents = append(combinedResults.MovieTorrents, t)
+			}
+			for _, t := range results.CompleteSeriesTorrents {
+				combinedResults.CompleteSeriesTorrents = append(combinedResults.CompleteSeriesTorrents, t)
+			}
+			for _, t := range results.CompleteSeasonTorrents {
+				combinedResults.CompleteSeasonTorrents = append(combinedResults.CompleteSeasonTorrents, t)
+			}
+			for _, t := range results.EpisodeTorrents {
+				combinedResults.EpisodeTorrents = append(combinedResults.EpisodeTorrents, t)
+			}
+			mu.Unlock()
+		} else {
+			h.services.Logger.Debugf("[StreamHandler] Apibay returned no results")
+		}
+	}()
+	
 	
 	// Wait for searches with timeout
 	go func() {
@@ -380,8 +470,100 @@ func (h *Handler) searchTorrentsOnly(query, mediaType string, season, episode in
 	return &combinedResults
 }
 
+// searchTorrentsOnlySpecificEpisode searches for a specific episode using episode-specific queries
+func (h *Handler) searchTorrentsOnlySpecificEpisode(query, mediaType string, season, episode int, imdbID string, year int) *models.CombinedTorrentResults {
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	combinedResults := models.CombinedTorrentResults{}
+	
+	// Create timeout channel for search operations
+	searchTimeout := constants.SearchTimeout
+	done := make(chan bool)
+	
+	// Add YGG search with specific episode query
+	wg.Add(constants.TorrentSearchGoroutines)
+	go func() {
+		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				h.services.Logger.Errorf("[StreamHandler] YGG specific episode search panic recovered: %v", r)
+			}
+		}()
+		
+		h.services.Logger.Infof("[StreamHandler] YGG specific episode search started - query: %s, s%02de%02d", query, season, episode)
+		
+		// Use YGG's SearchTorrentsSpecificEpisode if available, otherwise use regular search
+		results, err := h.services.YGG.SearchTorrentsSpecificEpisode(query, mediaType, season, episode)
+		if err != nil {
+			h.services.Logger.Errorf("[StreamHandler] failed to search YGG for specific episode: %v", err)
+			return
+		}
+		
+		if results != nil {
+			mu.Lock()
+			// Only add episode torrents from this search
+			for _, t := range results.EpisodeTorrents {
+				combinedResults.EpisodeTorrents = append(combinedResults.EpisodeTorrents, t)
+			}
+			mu.Unlock()
+		}
+	}()
+	
+	// Add Apibay search with specific episode query
+	go func() {
+		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				h.services.Logger.Errorf("[StreamHandler] Apibay specific episode search panic recovered: %v", r)
+			}
+		}()
+		
+		// Use Apibay's specific episode search method
+		h.services.Logger.Infof("[StreamHandler] Apibay specific episode search started - query: %s, s%02de%02d", query, season, episode)
+		results, err := h.services.Apibay.SearchTorrentsSpecificEpisode(query, mediaType, season, episode)
+		if err != nil {
+			h.services.Logger.Errorf("[StreamHandler] failed to search Apibay for specific episode: %v", err)
+			return
+		}
+		
+		if results != nil {
+			mu.Lock()
+			// Only add episode torrents from this search
+			for _, t := range results.EpisodeTorrents {
+				combinedResults.EpisodeTorrents = append(combinedResults.EpisodeTorrents, t)
+			}
+			mu.Unlock()
+		}
+	}()
+	
+	
+	// Wait for searches with timeout
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	
+	select {
+	case <-done:
+		h.services.Logger.Debugf("[StreamHandler] all specific episode searches completed successfully")
+	case <-time.After(searchTimeout):
+		h.services.Logger.Errorf("[StreamHandler] specific episode search timeout after %v", searchTimeout)
+	}
+	
+	h.services.Logger.Infof("[StreamHandler] specific episode search completed - episodes found: %d", len(combinedResults.EpisodeTorrents))
+	
+	return &combinedResults
+}
+
+// processResults applies filtering and prioritization to torrent search results.
+// Implements intelligent prioritization based on request type:
+// - For specific episodes: season packs > episodes > complete series
+// - For season requests: season packs > complete series > episodes
+// - For movies: applies year filtering when specified
+// Returns the first working stream found (sequential processing).
 func (h *Handler) processResults(results *models.CombinedTorrentResults, apiKey string, userConfig *config.Config, year int, targetSeason, targetEpisode int) []models.Stream {
-	h.services.Logger.Infof("[StreamHandler] processResults started with %d movie torrents", len(results.MovieTorrents))
+	h.services.Logger.Infof("[StreamHandler] processResults started - movies: %d, episodes: %d, seasons: %d, complete series: %d", 
+		len(results.MovieTorrents), len(results.EpisodeTorrents), len(results.CompleteSeasonTorrents), len(results.CompleteSeriesTorrents))
 	
 	// Apply year filtering to movie torrents if year is provided
 	if year > 0 && len(results.MovieTorrents) > 0 {
@@ -397,293 +579,274 @@ func (h *Handler) processResults(results *models.CombinedTorrentResults, apiKey 
 		results.MovieTorrents = filteredMovies
 	}
 	
-	var magnets []models.MagnetInfo
-	hashToTorrent := make(map[string]models.TorrentInfo)
+	// Collect all torrents in priority order
+	var allTorrents []models.TorrentInfo
 	
-	processTorrents := func(torrents []models.TorrentInfo) {
-		h.services.Logger.Infof("[StreamHandler] processing %d torrents for hash extraction", len(torrents))
-		
-		// Process torrents that already have hashes first
-		for _, torrent := range torrents {
-			if torrent.Hash != "" {
-				h.services.Logger.Infof("[StreamHandler] adding torrent with hash - title: %s, source: %s, hash: %s", torrent.Title, torrent.Source, torrent.Hash)
-				magnets = append(magnets, models.MagnetInfo{
-					Hash:   torrent.Hash,
-					Title:  torrent.Title,
-					Source: torrent.Source,
-				})
-				hashToTorrent[torrent.Hash] = torrent
-			} else {
-				h.services.Logger.Debugf("[StreamHandler] skipping torrent without hash - title: %s, source: %s", torrent.Title, torrent.Source)
-			}
-		}
-		
-		// Collect YGG torrents that need hash retrieval
-		var yggTorrents []models.TorrentInfo
-		for _, torrent := range torrents {
-			if torrent.Hash == "" && torrent.Source == "YGG" {
-				yggTorrents = append(yggTorrents, torrent)
-			}
-		}
-		
-		if len(yggTorrents) > 0 {
-			// Get user's FilesToShow setting to determine how many torrents to process
-			maxTorrents := constants.DefaultFilesToShow
-			if userConfig != nil {
-				maxTorrents = userConfig.FilesToShow
-			}
-			
-			// Limit to available torrents and a reasonable maximum for hash retrieval
-			if len(yggTorrents) < maxTorrents {
-				maxTorrents = len(yggTorrents)
-			}
-			if maxTorrents > 10 { // Cap at 10 for performance
-				maxTorrents = 10
-			}
-			
-			requestedFiles := "default"
-			if userConfig != nil {
-				requestedFiles = fmt.Sprintf("%d", userConfig.FilesToShow)
-			}
-			h.services.Logger.Infof("[StreamHandler] processing %d YGG torrents for hashes (user requested %s files)", maxTorrents, requestedFiles)
-			
-			// Process torrents sequentially for reliability
-			// Note: torrents are already filtered and sorted by the torrent service
-			successCount := 0
-			for i := 0; i < maxTorrents; i++ {
-				torrent := yggTorrents[i]
-				h.services.Logger.Debugf("[StreamHandler] getting hash for torrent %d/%d: %s", i+1, maxTorrents, torrent.Title)
-				
-				hash, err := h.services.YGG.GetTorrentHash(torrent.ID)
-				if err != nil {
-					h.services.Logger.Warnf("[StreamHandler] failed to get hash for torrent %s: %v", torrent.Title, err)
-				} else if hash != "" {
-					successCount++
-					h.services.Logger.Debugf("[StreamHandler] got hash %s for torrent %s", hash, torrent.Title)
-					torrent.Hash = hash
-					magnets = append(magnets, models.MagnetInfo{
-						Hash:   hash,
-						Title:  torrent.Title,
-						Source: torrent.Source,
-					})
-					hashToTorrent[hash] = torrent
-				} else {
-					h.services.Logger.Warnf("[StreamHandler] torrent %s returned empty hash", torrent.Title)
-				}
-			}
-			
-			h.services.Logger.Infof("[StreamHandler] hash extraction completed - %d successful out of %d attempted", successCount, maxTorrents)
-		}
-		
-		h.services.Logger.Infof("[StreamHandler] total magnets collected: %d", len(magnets))
-	}
-	
-	processTorrents(results.MovieTorrents)
-	processTorrents(results.CompleteSeriesTorrents)
-	processTorrents(results.EpisodeTorrents)
-	
-	// Don't process complete season torrents in the regular flow - they'll be handled separately
-	
-	// Process complete season torrents to extract specific episodes
-	var seasonTorrentHashes map[string]bool
-	if targetSeason > 0 && targetEpisode > 0 && len(results.CompleteSeasonTorrents) > 0 {
-		h.services.Logger.Infof("[StreamHandler] found %d complete season torrents for S%02dE%02d", 
-			len(results.CompleteSeasonTorrents), targetSeason, targetEpisode)
-		
-		// Only use the best complete season torrent (already sorted by priority)
-		bestSeasonTorrent := results.CompleteSeasonTorrents[0]
-		h.services.Logger.Infof("[StreamHandler] using best season torrent: %s (hash: %s)", bestSeasonTorrent.Title, bestSeasonTorrent.Hash)
-		
-		// Add the best season torrent to magnets for processing
-		if bestSeasonTorrent.Hash == "" && bestSeasonTorrent.Source == "YGG" {
-			// Fetch hash for YGG torrent
-			hash, err := h.services.YGG.GetTorrentHash(bestSeasonTorrent.ID)
-			if err == nil && hash != "" {
-				bestSeasonTorrent.Hash = hash
-			}
-		}
-		
-		if bestSeasonTorrent.Hash != "" {
-			// Track season torrent hashes so we can identify them later
-			seasonTorrentHashes = make(map[string]bool)
-			seasonTorrentHashes[bestSeasonTorrent.Hash] = true
-			
-			// Add to magnets for upload
-			magnets = append(magnets, models.MagnetInfo{
-				Hash:   bestSeasonTorrent.Hash,
-				Title:  bestSeasonTorrent.Title,
-				Source: bestSeasonTorrent.Source,
-			})
-			hashToTorrent[bestSeasonTorrent.Hash] = bestSeasonTorrent
-		}
+	// Add torrents in priority order based on request type
+	if targetSeason > 0 && targetEpisode > 0 {
+		// For specific episodes, prioritize: complete seasons -> episodes -> complete series
+		// Complete seasons are better quality and contain the episode we want
+		allTorrents = append(allTorrents, results.CompleteSeasonTorrents...)
+		allTorrents = append(allTorrents, results.EpisodeTorrents...)
+		allTorrents = append(allTorrents, results.CompleteSeriesTorrents...)
+	} else if targetSeason > 0 && targetEpisode == 0 {
+		// For complete season requests, prioritize: season packs -> complete series -> episodes
+		allTorrents = append(allTorrents, results.CompleteSeasonTorrents...)
+		allTorrents = append(allTorrents, results.CompleteSeriesTorrents...)
+		allTorrents = append(allTorrents, results.EpisodeTorrents...)
 	} else {
-		h.services.Logger.Infof("[StreamHandler] no season torrents to process - targetSeason: %d, targetEpisode: %d, seasonTorrents: %d", 
-			targetSeason, targetEpisode, len(results.CompleteSeasonTorrents))
+		// For movies or general searches
+		allTorrents = append(allTorrents, results.MovieTorrents...)
+		allTorrents = append(allTorrents, results.EpisodeTorrents...)
+		allTorrents = append(allTorrents, results.CompleteSeasonTorrents...)
+		allTorrents = append(allTorrents, results.CompleteSeriesTorrents...)
 	}
 	
-	if len(magnets) == 0 {
-		return []models.Stream{} // No magnets to process
+	h.services.Logger.Infof("[StreamHandler] processing %d torrents in priority order", len(allTorrents))
+	
+	// Process torrents one by one until we find a working stream
+	return h.processSequentialTorrents(allTorrents, apiKey, userConfig, targetSeason, targetEpisode)
+}
+
+// processSequentialTorrents processes torrents one by one until a working stream is found
+// processSequentialTorrents processes torrents one by one until a working stream is found.
+// This approach stops at the first success to minimize processing time and API calls.
+// For each torrent: fetches hash (if needed) -> uploads to AllDebrid -> checks readiness -> creates stream.
+func (h *Handler) processSequentialTorrents(torrents []models.TorrentInfo, apiKey string, userConfig *config.Config, targetSeason, targetEpisode int) []models.Stream {
+	if len(torrents) == 0 {
+		h.services.Logger.Infof("[StreamHandler] no torrents to process")
+		return []models.Stream{}
 	}
 	
-	// Limit the number of magnets to prevent AllDebrid API timeouts
-	maxMagnets := 30
-	if len(magnets) > maxMagnets {
-		h.services.Logger.Infof("[StreamHandler] limiting magnets from %d to %d to prevent timeouts", len(magnets), maxMagnets)
-		magnets = magnets[:maxMagnets]
-	}
+	h.services.Logger.Infof("[StreamHandler] processing %d torrents sequentially", len(torrents))
 	
-	h.services.Logger.Infof("[StreamHandler] processing %d magnets sequentially", len(magnets))
-	
-	// Process magnets one by one, starting with the best
-	var allStreams []models.Stream
-	
-	for i, magnet := range magnets {
-		h.services.Logger.Infof("[StreamHandler] trying magnet %d/%d: %s", i+1, len(magnets), magnet.Title)
+	for i, torrent := range torrents {
+		h.services.Logger.Infof("[StreamHandler] trying torrent %d/%d: %s (source: %s)", i+1, len(torrents), torrent.Title, torrent.Source)
 		
-		// Upload the magnet
-		err := h.services.AllDebrid.UploadMagnet(magnet.Hash, magnet.Title, apiKey)
-		if err != nil {
-			h.services.Logger.Errorf("[StreamHandler] failed to upload magnet %s: %v", magnet.Title, err)
+		// Get hash if needed
+		hash := torrent.Hash
+		if hash == "" && torrent.Source == "YGG" {
+			h.services.Logger.Infof("[StreamHandler] fetching hash for YGG torrent: %s", torrent.Title)
+			fetchedHash, err := h.services.YGG.GetTorrentHash(torrent.ID)
+			if err != nil {
+				h.services.Logger.Errorf("[StreamHandler] failed to fetch hash for torrent %s: %v", torrent.Title, err)
+				continue
+			}
+			if fetchedHash == "" {
+				h.services.Logger.Warnf("[StreamHandler] torrent %s returned empty hash", torrent.Title)
+				continue
+			}
+			hash = fetchedHash
+		}
+		
+		if hash == "" {
+			h.services.Logger.Warnf("[StreamHandler] skipping torrent without hash: %s", torrent.Title)
 			continue
 		}
-		h.services.Logger.Infof("[StreamHandler] magnet uploaded successfully: %s", magnet.Title)
 		
-		// Check the magnet status with 2 attempts
+		// Upload the magnet
+		h.services.Logger.Infof("[StreamHandler] uploading magnet: %s", torrent.Title)
+		err := h.services.AllDebrid.UploadMagnet(hash, torrent.Title, apiKey)
+		if err != nil {
+			h.services.Logger.Errorf("[StreamHandler] failed to upload magnet %s: %v", torrent.Title, err)
+			continue
+		}
+		
+		// Check if magnet is ready (try twice)
 		var isReady bool
-		for attempt := 1; attempt <= 2; attempt++ {
+		var readyMagnet *models.ProcessedMagnet
+		
+		for attempt := 1; attempt <= constants.MaxMagnetCheckAttempts; attempt++ {
 			h.services.Logger.Infof("[StreamHandler] checking magnet status - attempt %d/2", attempt)
 			
 			// Check just this one magnet
-			singleMagnetSlice := []models.MagnetInfo{magnet}
-			processedMagnets, err := h.services.AllDebrid.CheckMagnets(singleMagnetSlice, apiKey)
+			magnetInfo := models.MagnetInfo{Hash: hash, Title: torrent.Title, Source: torrent.Source}
+			processedMagnets, err := h.services.AllDebrid.CheckMagnets([]models.MagnetInfo{magnetInfo}, apiKey)
 			if err != nil {
 				h.services.Logger.Errorf("[StreamHandler] CheckMagnets failed: %v", err)
-				if attempt < 2 {
-					time.Sleep(2 * time.Second)
+				if attempt < constants.MaxMagnetCheckAttempts {
+					time.Sleep(constants.MagnetCheckRetryDelay)
 					continue
 				}
 				break
 			}
 			
-			// Check if it's ready
 			if len(processedMagnets) > 0 && processedMagnets[0].Ready && len(processedMagnets[0].Links) > 0 {
 				h.services.Logger.Infof("[StreamHandler] magnet is ready with %d links!", len(processedMagnets[0].Links))
-				
-				// Check if this is a season torrent that needs special handling
-				if seasonTorrentHashes != nil && seasonTorrentHashes[magnet.Hash] && targetSeason > 0 && targetEpisode > 0 {
-					h.services.Logger.Infof("[StreamHandler] processing season torrent for specific episode S%02dE%02d", targetSeason, targetEpisode)
-					
-					// Process the links directly to find the target episode
-					h.services.Logger.Infof("[StreamHandler] processing %d links from season torrent", len(processedMagnets[0].Links))
-					
-					for _, link := range processedMagnets[0].Links {
-						if linkObj, ok := link.(map[string]interface{}); ok {
-							// Get filename and check if it's a video file
-							filename, _ := linkObj["filename"].(string)
-							linkStr, _ := linkObj["link"].(string)
-							size, _ := linkObj["size"].(float64)
-							
-							if filename != "" && linkStr != "" && isVideoFile(filename) {
-								// Parse episode info from filename
-								season, episode := parseEpisodeFromFilename(filename)
-								h.services.Logger.Debugf("[StreamHandler] checking file: %s (S%02dE%02d)", filename, season, episode)
-								
-								if season == targetSeason && episode == targetEpisode {
-									h.services.Logger.Infof("[StreamHandler] found target episode: S%02dE%02d - %s", season, episode, filename)
-									
-									// Unlock the episode link
-									directURL, err := h.services.AllDebrid.UnlockLink(linkStr, apiKey)
-									if err != nil {
-										h.services.Logger.Errorf("[StreamHandler] failed to unlock episode link: %v", err)
-										continue
-									}
-									
-									streamTitle := fmt.Sprintf("%.2f GB - %s (S%02dE%02d from season pack)", size/(1024*1024*1024), filename, season, episode)
-									
-									stream := models.Stream{
-										Name:  "AllDebrid",
-										Title: streamTitle,
-										URL:   directURL,
-									}
-									allStreams = append(allStreams, stream)
-									isReady = true
-									break // Found the target episode, stop searching
-								}
-							}
-						}
-					}
-				} else {
-					// Regular torrent processing
-					torrent := hashToTorrent[magnet.Hash]
-					
-					// Find the largest video file
-					var largestVideo map[string]interface{}
-					var largestSize float64
-					
-					for _, link := range processedMagnets[0].Links {
-						if linkObj, ok := link.(map[string]interface{}); ok {
-							if size, ok := linkObj["size"].(float64); ok {
-								if size > largestSize {
-									largestSize = size
-									largestVideo = linkObj
-								}
-							}
-						}
-					}
-					
-					// Process the largest video file
-					if largestVideo != nil {
-						if linkStr, ok := largestVideo["link"].(string); ok {
-							// Unlock the link to get direct URL
-							directURL, err := h.services.AllDebrid.UnlockLink(linkStr, apiKey)
-							if err != nil {
-								h.services.Logger.Errorf("[StreamHandler] failed to unlock link: %v", err)
-								continue
-							}
-							
-							streamTitle := fmt.Sprintf("%s\n%s", torrent.Title, parseFileInfo(largestVideo))
-							
-							stream := models.Stream{
-								Name:  "AllDebrid",
-								Title: streamTitle,
-								URL:   directURL,
-							}
-							allStreams = append(allStreams, stream)
-						}
-					}
-					
-					isReady = true
-				}
+				isReady = true
+				readyMagnet = &processedMagnets[0]
 				break
 			}
 			
-			if attempt < 2 {
-				h.services.Logger.Infof("[StreamHandler] magnet not ready yet, waiting 3s before retry")
-				time.Sleep(3 * time.Second)
+			if attempt < constants.MaxMagnetCheckAttempts {
+				h.services.Logger.Infof("[StreamHandler] magnet not ready yet, waiting before retry")
+				time.Sleep(constants.MagnetReadyRetryDelay)
 			}
 		}
 		
-		// If we found a ready magnet, return immediately
-		if isReady && len(allStreams) > 0 {
-			h.services.Logger.Infof("[StreamHandler] found ready magnet, returning %d streams", len(allStreams))
-			return allStreams
+		if !isReady || readyMagnet == nil {
+			h.services.Logger.Infof("[StreamHandler] magnet not ready after %d attempts, trying next", constants.MaxMagnetCheckAttempts)
+			continue
 		}
 		
-		h.services.Logger.Infof("[StreamHandler] magnet %d not ready after 2 attempts, trying next", i+1)
+		// Process the ready magnet
+		stream := h.processSingleReadyMagnet(readyMagnet, torrent, targetSeason, targetEpisode, apiKey)
+		if stream != nil {
+			h.services.Logger.Infof("[StreamHandler] successfully created stream from torrent: %s", torrent.Title)
+			return []models.Stream{*stream}
+		}
+		
+		h.services.Logger.Warnf("[StreamHandler] failed to create stream from ready magnet: %s", torrent.Title)
 	}
 	
-	h.services.Logger.Infof("[StreamHandler] no magnets became ready")
-	
-	// No streams found
+	h.services.Logger.Infof("[StreamHandler] no working torrents found")
 	return []models.Stream{}
 }
 
+// processSingleReadyMagnet processes a single ready magnet and returns a stream if successful
+// processSingleReadyMagnet creates a stream from a ready AllDebrid magnet.
+// Handles different scenarios:
+// - Season pack + specific episode: finds target episode file within the pack
+// - Season pack + full season: returns largest file (complete season archive)
+// - Regular torrent: returns largest file (typically the main video)
+func (h *Handler) processSingleReadyMagnet(magnet *models.ProcessedMagnet, torrent models.TorrentInfo, targetSeason, targetEpisode int, apiKey string) *models.Stream {
+	// Check if this is a season pack
+	isSeasonPack := h.isSeasonPack(torrent.Title)
+	
+	// Case 1: Season pack and we need a specific episode
+	if targetSeason > 0 && targetEpisode > 0 && isSeasonPack {
+		h.services.Logger.Infof("[StreamHandler] processing season pack for specific episode s%02de%02d", targetSeason, targetEpisode)
+		
+		// Find the specific episode file
+		for _, link := range magnet.Links {
+			if linkObj, ok := link.(map[string]interface{}); ok {
+				if filename, ok := linkObj["filename"].(string); ok {
+					season, episode := h.parseEpisodeFromFilename(filename)
+					if season == targetSeason && episode == targetEpisode {
+						h.services.Logger.Infof("[StreamHandler] found target episode: %s", filename)
+						
+						if linkStr, ok := linkObj["link"].(string); ok {
+							directURL, err := h.services.AllDebrid.UnlockLink(linkStr, apiKey)
+							if err != nil {
+								h.services.Logger.Errorf("[StreamHandler] failed to unlock episode link: %v", err)
+								continue
+							}
+							
+							streamTitle := fmt.Sprintf("%s\n%s", torrent.Title, parseFileInfo(linkObj))
+							return &models.Stream{
+								Name:  torrent.Source,
+								Title: streamTitle,
+								URL:   directURL,
+							}
+						}
+					}
+				}
+			}
+		}
+		
+		h.services.Logger.Warnf("[StreamHandler] target episode s%02de%02d not found in season pack", targetSeason, targetEpisode)
+		return nil
+	}
+	
+	// Case 2: Complete season requested (targetEpisode == 0) and this is a season pack
+	if targetSeason > 0 && targetEpisode == 0 && isSeasonPack {
+		h.services.Logger.Infof("[StreamHandler] processing complete season pack for season %d", targetSeason)
+		
+		// For complete season, return the largest file (usually the entire season archive)
+		var largestFile map[string]interface{}
+		var largestSize float64
+		
+		for _, link := range magnet.Links {
+			if linkObj, ok := link.(map[string]interface{}); ok {
+				if size, ok := linkObj["size"].(float64); ok {
+					if size > largestSize {
+						largestSize = size
+						largestFile = linkObj
+					}
+				}
+			}
+		}
+		
+		if largestFile != nil {
+			if linkStr, ok := largestFile["link"].(string); ok {
+				directURL, err := h.services.AllDebrid.UnlockLink(linkStr, apiKey)
+				if err != nil {
+					h.services.Logger.Errorf("[StreamHandler] failed to unlock season pack link: %v", err)
+					return nil
+				}
+				
+				streamTitle := fmt.Sprintf("%s\n%s", torrent.Title, parseFileInfo(largestFile))
+				return &models.Stream{
+					Name:  torrent.Source,
+					Title: streamTitle,
+					URL:   directURL,
+				}
+			}
+		}
+		
+		h.services.Logger.Warnf("[StreamHandler] no valid files found in season pack")
+		return nil
+	}
+	
+	// Regular torrent - find the largest file
+	h.services.Logger.Infof("[StreamHandler] processing regular torrent, finding largest file")
+	
+	var largestFile map[string]interface{}
+	var largestSize float64
+	
+	for _, link := range magnet.Links {
+		if linkObj, ok := link.(map[string]interface{}); ok {
+			if size, ok := linkObj["size"].(float64); ok {
+				if size > largestSize {
+					largestSize = size
+					largestFile = linkObj
+				}
+			}
+		}
+	}
+	
+	if largestFile == nil {
+		h.services.Logger.Warnf("[StreamHandler] no files found in magnet")
+		return nil
+	}
+	
+	if linkStr, ok := largestFile["link"].(string); ok {
+		directURL, err := h.services.AllDebrid.UnlockLink(linkStr, apiKey)
+		if err != nil {
+			h.services.Logger.Errorf("[StreamHandler] failed to unlock link: %v", err)
+			return nil
+		}
+		
+		streamTitle := fmt.Sprintf("%s\n%s", torrent.Title, parseFileInfo(largestFile))
+		return &models.Stream{
+			Name:  torrent.Source,
+			Title: streamTitle,
+			URL:   directURL,
+		}
+	}
+	
+	h.services.Logger.Warnf("[StreamHandler] no valid link found in largest file")
+	return nil
+}
+
+// isSeasonPack determines if a torrent title indicates a complete season pack
+// isSeasonPack determines if a torrent title indicates a complete season pack.
+// Season packs contain multiple episodes and typically offer better quality.
+func (h *Handler) isSeasonPack(title string) bool {
+	titleLower := strings.ToLower(title)
+	return strings.Contains(titleLower, "complete") || 
+		   strings.Contains(titleLower, "season") ||
+		   strings.Contains(titleLower, "saison")
+}
+
+// parseFileInfo extracts and formats file information for display in stream titles.
+// Includes file size in GB and filename for user information.
 func parseFileInfo(linkObj map[string]interface{}) string {
 	info := ""
 	
 	// Add size if available
 	if size, ok := linkObj["size"].(float64); ok {
-		sizeGB := size / (1024 * 1024 * 1024)
+		sizeGB := size / constants.BytesToGB
 		info += fmt.Sprintf("💾 %.2f GB", sizeGB)
 	}
 	
@@ -698,509 +861,61 @@ func parseFileInfo(linkObj map[string]interface{}) string {
 	return info
 }
 
+// parseStreamID extracts IMDB ID and episode information from stream request ID.
+// Supports both movie format ("tt1234567") and episode format ("tt1234567:1:5").
+// Returns imdbID, season, episode (season and episode are 0 for movies).
 func parseStreamID(id string) (string, int, int) {
 	id = strings.TrimSuffix(id, ".json")
+	
+	if episodeRegex.MatchString(id) {
+		matches := episodeRegex.FindStringSubmatch(id)
+		if len(matches) == 3 {
+			imdbID := strings.Split(id, ":")[0]
+			season, _ := strconv.Atoi(matches[1])
+			episode, _ := strconv.Atoi(matches[2])
+			return imdbID, season, episode
+		}
+	}
 	
 	if imdbIDRegex.MatchString(id) {
 		return id, 0, 0
 	}
 	
-	if matches := episodeRegex.FindStringSubmatch(id); len(matches) == 3 {
-		season, _ := strconv.Atoi(matches[1])
-		episode, _ := strconv.Atoi(matches[2])
-		// Extract IMDB ID from the full match (e.g., "tt19514434:1:1" -> "tt19514434")
-		colonIndex := strings.Index(matches[0], ":")
-		if colonIndex > 0 {
-			return matches[0][:colonIndex], season, episode
-		}
-		return matches[0], season, episode
-	}
-	
 	return "", 0, 0
 }
 
-// extractEpisodesFromSeasons processes complete season torrents to extract specific episodes
-func (h *Handler) extractEpisodesFromSeasons(seasonTorrents []models.TorrentInfo, apiKey string, userConfig *config.Config, targetSeason, targetEpisode int) []models.Stream {
-	var episodeStreams []models.Stream
-	
-	h.services.Logger.Infof("[StreamHandler] extractEpisodesFromSeasons started - torrents: %d, target: S%02dE%02d", 
-		len(seasonTorrents), targetSeason, targetEpisode)
-	
-	// First, get hashes for YGG season torrents that don't have them
-	for i, torrent := range seasonTorrents {
-		if torrent.Hash == "" && torrent.Source == "YGG" {
-			h.services.Logger.Infof("[StreamHandler] fetching hash for YGG season torrent: %s", torrent.Title)
-			hash, err := h.services.YGG.GetTorrentHash(torrent.ID)
-			if err != nil {
-				h.services.Logger.Warnf("[StreamHandler] failed to get hash for season torrent %s: %v", torrent.Title, err)
-			} else if hash != "" {
-				seasonTorrents[i].Hash = hash
-				h.services.Logger.Infof("[StreamHandler] got hash %s for season torrent %s", hash, torrent.Title)
-			}
-		}
-	}
-	
-	// Group season torrents by provider to use appropriate debrid service
-	magnetsByProvider := make(map[string][]models.TorrentInfo)
-	for _, torrent := range seasonTorrents {
-		if torrent.Hash != "" {
-			provider := strings.ToLower(torrent.Source)
-			magnetsByProvider[provider] = append(magnetsByProvider[provider], torrent)
-			h.services.Logger.Debugf("[StreamHandler] grouped season torrent - provider: %s, title: %s, hash: %s", 
-				provider, torrent.Title, torrent.Hash)
-		} else {
-			h.services.Logger.Warnf("[StreamHandler] season torrent has no hash after retrieval - title: %s", torrent.Title)
-		}
-	}
-	
-	for provider, providerTorrents := range magnetsByProvider {
-		// Get the debrid service for this provider
-		debridService := "alldebrid" // default
-		if userConfig != nil {
-			debridService = userConfig.GetDebridForProvider(provider)
-		}
-		
-		// Currently only AllDebrid is supported
-		if debridService != "alldebrid" {
-			h.services.Logger.Warnf("[StreamHandler] unsupported debrid service %s for provider %s, skipping season processing", debridService, provider)
-			continue
-		}
-		
-		// Convert torrents to magnet info for checking availability
-		var magnets []models.MagnetInfo
-		for _, torrent := range providerTorrents {
-			magnets = append(magnets, models.MagnetInfo{
-				Hash:   torrent.Hash,
-				Title:  torrent.Title,
-				Source: torrent.Source,
-			})
-		}
-		
-		// Check which season torrents are available
-		h.services.Logger.Infof("[StreamHandler] checking %d season magnets with AllDebrid", len(magnets))
-		processedMagnets, err := h.services.AllDebrid.CheckMagnets(magnets, apiKey)
-		if err != nil {
-			h.services.Logger.Errorf("[StreamHandler] failed to check season magnets: %v", err)
-			continue
-		}
-		
-		h.services.Logger.Infof("[StreamHandler] AllDebrid returned %d processed magnets", len(processedMagnets))
-		
-		// Process each season torrent - upload if not ready
-		for idx, magnet := range processedMagnets {
-			h.services.Logger.Debugf("[StreamHandler] processed magnet %d - ready: %v, links: %d, hash: %s", 
-				idx, magnet.Ready, len(magnet.Links), magnet.Hash)
-			
-			// If not ready, try to upload to AllDebrid
-			if !magnet.Ready {
-				h.services.Logger.Infof("[StreamHandler] uploading season torrent to AllDebrid: %s", magnet.Name)
-				err := h.services.AllDebrid.UploadMagnet(magnet.Hash, magnet.Name, apiKey)
-				if err != nil {
-					h.services.Logger.Errorf("[StreamHandler] failed to upload season torrent: %v", err)
-					continue
-				}
-				
-				// Wait for torrent to be processed
-				h.services.Logger.Infof("[StreamHandler] waiting for torrent to be processed...")
-				time.Sleep(3 * time.Second)
-				
-				// Check again
-				singleMagnet := []models.MagnetInfo{{Hash: magnet.Hash, Title: magnet.Name, Source: magnet.Source}}
-				updatedMagnets, err := h.services.AllDebrid.CheckMagnets(singleMagnet, apiKey)
-				if err != nil {
-					h.services.Logger.Errorf("[StreamHandler] failed to recheck uploaded season torrent: %v", err)
-					continue
-				}
-				
-				if len(updatedMagnets) > 0 {
-					magnet = updatedMagnets[0]
-					h.services.Logger.Infof("[StreamHandler] updated status - ready: %v, links: %d", magnet.Ready, len(magnet.Links))
-				}
-			}
-			
-			if magnet.Ready && len(magnet.Links) > 0 {
-				// Find the original torrent info
-				var originalTorrent models.TorrentInfo
-				for _, torrent := range providerTorrents {
-					if torrent.Hash == magnet.Hash {
-						originalTorrent = torrent
-						break
-					}
-				}
-				
-				// Extract episode files from this season torrent
-				h.services.Logger.Infof("[StreamHandler] extracting episode files from season torrent: %s (ID: %d)", 
-					originalTorrent.Title, magnet.ID)
-				
-				episodeFiles, err := h.services.AllDebrid.GetEpisodeFiles(fmt.Sprintf("%d", magnet.ID), originalTorrent, apiKey)
-				if err != nil {
-					h.services.Logger.Errorf("[StreamHandler] failed to get episode files from season torrent %s: %v", originalTorrent.Title, err)
-					continue
-				}
-				
-				h.services.Logger.Infof("[StreamHandler] extracted %d episode files from season torrent", len(episodeFiles))
-				
-				// Filter episodes to find the target episode
-				for _, episode := range episodeFiles {
-					h.services.Logger.Debugf("[StreamHandler] checking episode: S%02dE%02d - %s (target: S%02dE%02d)", 
-						episode.Season, episode.Episode, episode.Name, targetSeason, targetEpisode)
-					
-					if episode.Season == targetSeason && episode.Episode == targetEpisode {
-						h.services.Logger.Infof("[StreamHandler] found matching episode: S%02dE%02d - %s", 
-							episode.Season, episode.Episode, episode.Name)
-						
-						// Apply same filtering logic as regular torrents
-						if h.isEpisodeAllowed(episode, userConfig) {
-							h.services.Logger.Infof("[StreamHandler] episode passed filtering: %s", episode.Name)
-							// Unlock the episode link
-							directURL, err := h.services.AllDebrid.UnlockLink(episode.Link, apiKey)
-							if err != nil {
-								h.services.Logger.Errorf("[StreamHandler] failed to unlock episode link: %v", err)
-								continue
-							}
-							
-							stream := models.Stream{
-								Name:  fmt.Sprintf("[%s] %s", episode.Source, originalTorrent.Title),
-								Title: fmt.Sprintf("%.2f GB - %s (S%02dE%02d from season)", episode.Size/(1024*1024*1024), episode.Name, episode.Season, episode.Episode),
-								URL:   directURL,
-							}
-							episodeStreams = append(episodeStreams, stream)
-						}
-					}
-				}
-			}
-		}
-	}
-	
-	// Sort episode streams by quality (resolution, language, size)
-	h.sortEpisodeStreams(episodeStreams, userConfig)
-	
-	return episodeStreams
-}
-
-// isEpisodeAllowed checks if an episode meets the filtering criteria
-func (h *Handler) isEpisodeAllowed(episode models.EpisodeFile, userConfig *config.Config) bool {
-	if userConfig == nil {
+// matchesYear checks if a torrent title contains the expected year.
+// Used for filtering movie torrents to ensure correct year matches.
+func (h *Handler) matchesYear(title string, year int) bool {
+	if year == 0 {
 		return true
 	}
 	
-	h.services.Logger.Debugf("[StreamHandler] filtering episode: %s (resolution: %s, language: %s)", episode.Name, episode.Resolution, episode.Language)
-	
-	// Check resolution filter - only filter if we have a valid resolution
-	if episode.Resolution != "" && episode.Resolution != "unknown" {
-		if !userConfig.IsResolutionAllowed(episode.Resolution) {
-			h.services.Logger.Debugf("[StreamHandler] episode filtered by resolution: %s not in %v", episode.Resolution, userConfig.ResToShow)
-			return false
-		}
-	}
-	
-	// Check language filter using the same logic as regular torrents
-	languageAllowed := len(userConfig.LangToShow) == 0 // Allow all if no filter set
-	if !languageAllowed {
-		for _, lang := range userConfig.LangToShow {
-			if h.containsLanguage(episode.Name, lang) || (episode.Language != "" && strings.EqualFold(episode.Language, lang)) {
-				languageAllowed = true
-				break
-			}
-		}
-		if !languageAllowed {
-			h.services.Logger.Debugf("[StreamHandler] episode filtered by language: %s not matching %v", episode.Language, userConfig.LangToShow)
-			return false
-		}
-	}
-	
-	h.services.Logger.Debugf("[StreamHandler] episode passed all filters: %s", episode.Name)
-	return true
+	yearStr := fmt.Sprintf("%d", year)
+	return strings.Contains(title, yearStr)
 }
 
-// Helper functions for episode processing
-func parseEpisodeFromFilename(filename string) (season int, episode int) {
-	// Try different episode patterns
+// parseEpisodeFromFilename extracts season and episode numbers from filenames.
+// Supports multiple common naming patterns (S01E05, 1x05, Season 1 Episode 5, etc.).
+// Used when processing season packs to find specific episodes.
+func (h *Handler) parseEpisodeFromFilename(filename string) (int, int) {
 	patterns := []string{
-		`(?i)s(\d{1,2})e(\d{1,2})`,      // S01E01
-		`(?i)s(\d{1,2})\.e(\d{1,2})`,    // S01.E01
-		`(?i)(\d{1,2})x(\d{1,2})`,       // 1x01
-		`(?i)season\s*(\d{1,2})\s*episode\s*(\d{1,2})`, // Season 1 Episode 1
+		`[sS](\d{1,2})[eE](\d{1,2})`,
+		`[sS](\d{1,2})\.?[eE](\d{1,2})`,
+		`(\d{1,2})x(\d{1,2})`,
+		`[sS]eason\s*(\d{1,2})\s*[eE]pisode\s*(\d{1,2})`,
 	}
 	
 	for _, pattern := range patterns {
 		re := regexp.MustCompile(pattern)
-		matches := re.FindStringSubmatch(filename)
-		if len(matches) >= 3 {
-			if s, err := strconv.Atoi(matches[1]); err == nil {
-				if e, err := strconv.Atoi(matches[2]); err == nil {
-					return s, e
-				}
+		if matches := re.FindStringSubmatch(filename); len(matches) >= 3 {
+			season, err1 := strconv.Atoi(matches[1])
+			episode, err2 := strconv.Atoi(matches[2])
+			if err1 == nil && err2 == nil {
+				return season, episode
 			}
 		}
 	}
 	
 	return 0, 0
 }
-
-// containsLanguage checks if a title contains a specific language
-func (h *Handler) containsLanguage(title, language string) bool {
-	titleLower := strings.ToLower(title)
-	langLower := strings.ToLower(language)
-
-	switch langLower {
-	case "multi", "multi_fr":
-		return strings.Contains(titleLower, "multi")
-	case "french", "vf", "vff":
-		return strings.Contains(titleLower, "french") ||
-			strings.Contains(titleLower, "vff") ||
-			strings.Contains(titleLower, "vf") ||
-			strings.Contains(titleLower, "truefrench")
-	case "vo":
-		return strings.Contains(titleLower, "vo") ||
-			strings.Contains(titleLower, "vostfr") ||
-			strings.Contains(titleLower, "english") ||
-			(!strings.Contains(titleLower, "vf") && !strings.Contains(titleLower, "french") && !strings.Contains(titleLower, "multi"))
-	case "english":
-		return strings.Contains(titleLower, "english") ||
-			strings.Contains(titleLower, "vostfr")
-	case "vostfr":
-		return strings.Contains(titleLower, "vostfr")
-	default:
-		return strings.Contains(titleLower, langLower)
-	}
-}
-
-// sortEpisodeStreams sorts episode streams by resolution priority, language priority, and size
-func (h *Handler) sortEpisodeStreams(episodes []models.Stream, userConfig *config.Config) {
-	if userConfig == nil {
-		return
-	}
-	
-	h.services.Logger.Debugf("[StreamHandler] sorting %d episode streams", len(episodes))
-	
-	sort.Slice(episodes, func(i, j int) bool {
-		titleI := episodes[i].Name + " " + episodes[i].Title
-		titleJ := episodes[j].Name + " " + episodes[j].Title
-		
-		// 1. Resolution priority (higher priority first)
-		resI := h.extractResolutionFromTitle(episodes[i].Title)
-		resJ := h.extractResolutionFromTitle(episodes[j].Title)
-		
-		priResI := userConfig.GetResolutionPriority(resI)
-		priResJ := userConfig.GetResolutionPriority(resJ)
-		
-		h.services.Logger.Debugf("[StreamHandler] comparing resolutions: %s (priority %d) vs %s (priority %d)", resI, priResI, resJ, priResJ)
-		
-		if priResI != priResJ {
-			return priResI > priResJ
-		}
-		
-		// 2. Language priority (higher priority first)
-		priLangI := userConfig.GetLanguagePriority(titleI)
-		priLangJ := userConfig.GetLanguagePriority(titleJ)
-		
-		h.services.Logger.Debugf("[StreamHandler] comparing languages: %s (priority %d) vs %s (priority %d)", titleI, priLangI, titleJ, priLangJ)
-		
-		if priLangI != priLangJ {
-			return priLangI > priLangJ
-		}
-		
-		// 3. Size (larger files first)
-		sizeI := h.getSizeFromTitle(episodes[i].Title)
-		sizeJ := h.getSizeFromTitle(episodes[j].Title)
-		
-		h.services.Logger.Debugf("[StreamHandler] comparing sizes: %.2f GB vs %.2f GB", sizeI, sizeJ)
-		
-		return sizeI > sizeJ
-	})
-	
-	h.services.Logger.Debugf("[StreamHandler] episode sorting completed")
-}
-
-// extractResolutionFromTitle extracts resolution from episode title or stream name
-func (h *Handler) extractResolutionFromTitle(title string) string {
-	titleLower := strings.ToLower(title)
-	
-	// Check for 4K/2160p
-	if strings.Contains(titleLower, "2160p") || strings.Contains(titleLower, "4k") {
-		return "2160p"
-	}
-	// Check for 1080p
-	if strings.Contains(titleLower, "1080p") {
-		return "1080p"
-	}
-	// Check for 720p
-	if strings.Contains(titleLower, "720p") {
-		return "720p"
-	}
-	// Check for 480p
-	if strings.Contains(titleLower, "480p") {
-		return "480p"
-	}
-	
-	return "unknown"
-}
-
-// getSizeFromTitle extracts file size from episode title (format: "X.XX GB")
-func (h *Handler) getSizeFromTitle(title string) float64 {
-	// Look for pattern like "2.34 GB" at the beginning of the title
-	re := regexp.MustCompile(`(\d+\.?\d*)\s*GB`)
-	matches := re.FindStringSubmatch(title)
-	if len(matches) >= 2 {
-		if size, err := strconv.ParseFloat(matches[1], 64); err == nil {
-			return size
-		}
-	}
-	return 0.0
-}
-
-// sortAllStreams sorts all streams (both episode streams from seasons and regular streams)
-// with comprehensive logic: season priority, resolution priority, language priority, and size
-func (h *Handler) sortAllStreams(allStreams []models.Stream, episodeCount int, userConfig *config.Config) {
-	if userConfig == nil {
-		return
-	}
-	
-	h.services.Logger.Debugf("[StreamHandler] sorting %d total streams (%d from seasons)", len(allStreams), episodeCount)
-	
-	sort.Slice(allStreams, func(i, j int) bool {
-		// 1. Prioritize episodes from complete seasons (they come first in the slice)
-		iFromSeason := i < episodeCount
-		jFromSeason := j < episodeCount
-		
-		if iFromSeason && !jFromSeason {
-			return true // Episodes from seasons come first
-		}
-		if !iFromSeason && jFromSeason {
-			return false // Episodes from seasons come first
-		}
-		
-		// 2. Within the same group, use comprehensive sorting
-		titleI := allStreams[i].Name + " " + allStreams[i].Title
-		titleJ := allStreams[j].Name + " " + allStreams[j].Title
-		
-		// 2a. Resolution priority (higher priority first)
-		resI := h.extractResolutionFromTitle(allStreams[i].Title)
-		resJ := h.extractResolutionFromTitle(allStreams[j].Title)
-		
-		priResI := userConfig.GetResolutionPriority(resI)
-		priResJ := userConfig.GetResolutionPriority(resJ)
-		
-		if priResI != priResJ {
-			return priResI > priResJ
-		}
-		
-		// 2b. Language priority (higher priority first)
-		priLangI := userConfig.GetLanguagePriority(titleI)
-		priLangJ := userConfig.GetLanguagePriority(titleJ)
-		
-		if priLangI != priLangJ {
-			return priLangI > priLangJ
-		}
-		
-		// 2c. Size (larger files first)
-		sizeI := h.getSizeFromTitle(allStreams[i].Title)
-		sizeJ := h.getSizeFromTitle(allStreams[j].Title)
-		
-		return sizeI > sizeJ
-	})
-	
-	h.services.Logger.Debugf("[StreamHandler] all streams sorting completed")
-}
-
-func deduplicateStreams(streams []models.Stream) []models.Stream {
-	seen := make(map[string]bool)
-	var unique []models.Stream
-	
-	for _, stream := range streams {
-		key := stream.URL
-		if !seen[key] {
-			seen[key] = true
-			unique = append(unique, stream)
-		}
-	}
-	
-	return unique
-}
-
-func isMagnetReady(hash string, processedMagnets []models.ProcessedMagnet) bool {
-	for _, m := range processedMagnets {
-		if m.Hash == hash && m.Ready {
-			return true
-		}
-	}
-	return false
-}
-
-// findLargestVideoFile finds the largest video file from AllDebrid magnet links
-func (h *Handler) findLargestVideoFile(links []interface{}) map[string]interface{} {
-	var largestVideoFile map[string]interface{}
-	var largestSize float64 = 0
-	
-	for _, link := range links {
-		if linkObj, ok := link.(map[string]interface{}); ok {
-			// Check if this is a video file
-			if filename, exists := linkObj["filename"].(string); exists {
-				if isVideoFile(filename) {
-					// Get file size
-					var size float64 = 0
-					if sizeVal, exists := linkObj["size"].(float64); exists {
-						size = sizeVal
-					}
-					
-					h.services.Logger.Debugf("[StreamHandler] found video file: %s (%.2f GB)", filename, size/(1024*1024*1024))
-					
-					// Keep track of the largest video file
-					if size > largestSize {
-						largestSize = size
-						largestVideoFile = linkObj
-					}
-				} else {
-					h.services.Logger.Debugf("[StreamHandler] skipping non-video file: %s", filename)
-				}
-			}
-		}
-	}
-	
-	if largestVideoFile != nil {
-		if filename, exists := largestVideoFile["filename"].(string); exists {
-			h.services.Logger.Infof("[StreamHandler] selected largest video file: %s (%.2f GB)", filename, largestSize/(1024*1024*1024))
-		}
-	}
-	
-	return largestVideoFile
-}
-
-// isVideoFile checks if a filename has a video extension
-func isVideoFile(filename string) bool {
-	videoExtensions := []string{".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".mpg", ".mpeg", ".ts", ".m2ts"}
-	filename = strings.ToLower(filename)
-	
-	for _, ext := range videoExtensions {
-		if strings.HasSuffix(filename, ext) {
-			return true
-		}
-	}
-	
-	return false
-}
-
-// matchesYear checks if a torrent title contains the expected year
-func (h *Handler) matchesYear(title string, expectedYear int) bool {
-	if expectedYear == 0 {
-		return true // If no year provided, don't filter
-	}
-	
-	// Look for 4-digit year patterns in the title
-	yearPattern := regexp.MustCompile(`\b(19|20)\d{2}\b`)
-	matches := yearPattern.FindAllString(title, -1)
-	
-	for _, match := range matches {
-		if year, err := strconv.Atoi(match); err == nil {
-			// Allow some flexibility: exact year or within 1 year
-			if year == expectedYear || year == expectedYear-1 || year == expectedYear+1 {
-				return true
-			}
-		}
-	}
-	
-	// If no year found in title, allow it (some torrents don't include year)
-	return len(matches) == 0
-}
-

@@ -110,9 +110,6 @@ func (h *Handler) handleConfig(c *gin.Context) {
             if (decodedConfig.PROVIDER_DEBRID.ygg) {
               document.getElementById('ygg_debrid').value = decodedConfig.PROVIDER_DEBRID.ygg;
             }
-            if (decodedConfig.PROVIDER_DEBRID.eztv) {
-              document.getElementById('eztv_debrid').value = decodedConfig.PROVIDER_DEBRID.eztv;
-            }
           }
         } catch (error) {
           console.error("Error decoding configuration:", error);
@@ -128,8 +125,7 @@ func (h *Handler) handleConfig(c *gin.Context) {
         LANG_TO_SHOW: document.getElementById('lang').value.split(',').map(s => s.trim()).filter(s => s),
         API_KEY_ALLDEBRID: document.getElementById('alldebrid').value,
         PROVIDER_DEBRID: {
-          ygg: document.getElementById('ygg_debrid').value,
-          eztv: document.getElementById('eztv_debrid').value
+          ygg: document.getElementById('ygg_debrid').value
         }
       };
       const encodedConfig = btoa(JSON.stringify(config));
@@ -195,12 +191,6 @@ func (h *Handler) handleConfig(c *gin.Context) {
       </select>
     </div>
     
-    <div style="background-color: #f1f3f5; border-radius: 4px; padding: 15px;">
-      <label for="eztv_debrid" style="margin-top: 0;">EZTV :</label>
-      <select id="eztv_debrid" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; margin-top: 5px;">
-        <option value="alldebrid" selected>AllDebrid</option>
-      </select>
-    </div>
     
     <button onclick="generateConfig()">Générer la configuration</button>
     <div id="result" class="result"></div>

@@ -57,8 +57,9 @@ type GenericTorrent interface {
 	GetSource() string
 	GetLanguage() string
 	GetType() string // For services that have type info
-	GetSeason() int  // For services like EZTV that have season info
-	GetEpisode() int // For services like EZTV that have episode info
+	GetSeason() int  // For services that have season info
+	GetEpisode() int // For services that have episode info
+	GetSize() int64  // Size in bytes
 }
 
 type BaseTorrentService struct {
@@ -128,6 +129,65 @@ func (b *BaseTorrentService) CacheHash(provider, torrentID, hash string) {
 		b.cache.Set(cacheKey, hash)
 		b.logger.Debugf("[%s] cached hash for torrent %s: %s", provider, torrentID, hash)
 	}
+}
+
+// BuildSearchQuery builds a standardized search query for torrent sites
+// Format:
+// - Movies: "title+year"
+// - Series: "name+sXX" (matches both episodes and complete seasons)
+func (b *BaseTorrentService) BuildSearchQuery(query string, mediaType string, season, episode int) string {
+	return b.BuildSearchQueryWithMode(query, mediaType, season, episode, false)
+}
+
+// BuildSearchQueryWithMode builds a search query with option for specific episode
+// Format:
+// - Movies: "title+year"
+// - Series (season mode): "name+sXX" (matches both episodes and complete seasons)
+// - Series (episode mode): "name+sXXeXX" (matches specific episode)
+func (b *BaseTorrentService) BuildSearchQueryWithMode(query string, mediaType string, season, episode int, specificEpisode bool) string {
+	// Extract year from query if it's at the end (format: "title year")
+	var title string
+	var year string
+	parts := strings.Fields(query)
+	if len(parts) > 1 {
+		lastPart := parts[len(parts)-1]
+		if yearMatch, _ := regexp.MatchString(`^\d{4}$`, lastPart); yearMatch {
+			year = lastPart
+			title = strings.Join(parts[:len(parts)-1], " ")
+		} else {
+			title = query
+		}
+	} else {
+		title = query
+	}
+	
+	// Replace spaces with +
+	title = strings.ReplaceAll(title, " ", "+")
+	
+	// Build query based on type
+	if mediaType == "movie" {
+		// For movies: title+year (no prefix)
+		if year != "" {
+			return fmt.Sprintf("%s+%s", title, year)
+		}
+		return title
+	} else if mediaType == "series" {
+		// For series with specific episode mode
+		if specificEpisode && season > 0 && episode > 0 {
+			// Search for specific episode: name+s04e01
+			return fmt.Sprintf("%s+s%02de%02d", title, season, episode)
+		}
+		// For series, search by season to get both episodes and complete packs
+		if season > 0 {
+			// Search for season: name+s04 (will match both s04e01 and complete seasons)
+			// Using lowercase 's' as it's the standard format
+			return fmt.Sprintf("%s+s%02d", title, season)
+		}
+		// Just series name if no season specified
+		return title
+	}
+	
+	return title
 }
 
 func (b *BaseTorrentService) ParseFileName(fileName string) models.ParsedFileName {
@@ -203,7 +263,7 @@ func (b *BaseTorrentService) MatchesLanguageFilter(title string, language string
 	// Check language filter
 	langAllowed := len(b.config.LangToShow) == 0
 	if !langAllowed {
-		// If a language is explicitly provided (like EZTV's "VO"), use it directly
+		// If a language is explicitly provided, use it directly
 		if language != "" {
 			for _, lang := range b.config.LangToShow {
 				if strings.EqualFold(language, lang) {
@@ -340,6 +400,12 @@ func (b *BaseTorrentService) MatchesSeason(title string, season int) bool {
 		fmt.Sprintf(`(?i)complete.*season\s*%d`, season),             // Complete Season 4
 		fmt.Sprintf(`(?i)s%02d.*complete`, season),                   // S04 Complete
 		fmt.Sprintf(`(?i)season\s*%d.*complete`, season),             // Season 4 Complete
+		fmt.Sprintf(`(?i)s%02d.*pack`, season),                       // S04 Pack
+		fmt.Sprintf(`(?i)season\s*%d.*pack`, season),                 // Season 4 Pack
+		fmt.Sprintf(`(?i)pack.*s%02d`, season),                       // Pack S04
+		fmt.Sprintf(`(?i)pack.*season\s*%d`, season),                 // Pack Season 4
+		fmt.Sprintf(`(?i)integrale.*s%02d`, season),                  // Integrale S04 (French)
+		fmt.Sprintf(`(?i)integrale.*saison\s*%d`, season),            // Integrale Saison 4 (French)
 	}
 
 	for _, pattern := range patterns {
@@ -376,14 +442,20 @@ func (b *BaseTorrentService) SortTorrents(torrents []models.TorrentInfo) {
 		priorityI := b.GetTorrentPriority(torrents[i].Title)
 		priorityJ := b.GetTorrentPriority(torrents[j].Title)
 
+		// 1. First sort by resolution (higher is better)
 		if priorityI.Resolution != priorityJ.Resolution {
 			return priorityI.Resolution > priorityJ.Resolution
 		}
-		if priorityI.Language != priorityJ.Language {
-			return priorityI.Language > priorityJ.Language
+		
+		// 2. Then by language priority (higher is better) - only for YGG
+		if torrents[i].Source == "YGG" && torrents[j].Source == "YGG" {
+			if priorityI.Language != priorityJ.Language {
+				return priorityI.Language > priorityJ.Language
+			}
 		}
 
-		return false
+		// 3. Finally by size (larger is better)
+		return torrents[i].Size > torrents[j].Size
 	})
 }
 
@@ -410,6 +482,18 @@ func (ts *TorrentSorter) SortResults(results *models.TorrentResults) {
 	ts.SortTorrents(results.CompleteSeasonTorrents)
 	ts.SortTorrents(results.EpisodeTorrents)
 
+	// Log top 3 movies after sorting for debugging
+	if len(results.MovieTorrents) > 0 {
+		logger.Infof("[TorrentService] top movie torrents after sorting:")
+		for i := 0; i < 3 && i < len(results.MovieTorrents); i++ {
+			t := results.MovieTorrents[i]
+			parsed := ts.ParseFileName(t.Title)
+			priority := ts.GetTorrentPriority(t.Title)
+			logger.Infof("  %d. %s - Resolution: %s (priority:%d), Size: %.2f GB, Source: %s", 
+				i+1, t.Title, parsed.Resolution, priority.Resolution, float64(t.Size)/(1024*1024*1024), t.Source)
+		}
+	}
+
 	logger.Debugf("[TorrentService] torrent sorting completed")
 }
 
@@ -428,26 +512,32 @@ func ClassifyTorrent(title string, mediaType string, season, episode int, base *
 		return "complete_series"
 	}
 
-	if base.MatchesEpisode(title, season, episode) {
-		logger.Debugf("[TorrentService] torrent classification - '%s' classified as episode (matches S%dE%d)", title, season, episode)
-		return "episode"
-	}
-
-	// Only classify as episode if no specific episode was requested, or if we can't determine the exact match
-	if season == 0 || episode == 0 {
-		if base.ContainsSeasonEpisode(title) {
-			logger.Debugf("[TorrentService] torrent classification - '%s' classified as episode (contains pattern, no specific episode requested)", title)
-			return "episode"
-		}
-	} else {
-		// If specific episode requested, only match exact episodes (already checked above with MatchesEpisode)
-		logger.Debugf("[TorrentService] torrent classification - '%s' contains pattern but doesn't match requested S%dE%d", title, season, episode)
-	}
-
-	// Check for complete seasons - only match the specific requested season
+	// Check for complete seasons first - matches the requested season
 	if season > 0 && base.MatchesSeason(title, season) {
 		logger.Debugf("[TorrentService] torrent classification - '%s' classified as season (matches season %d)", title, season)
 		return "season"
+	}
+
+	// If looking for a specific episode
+	if season > 0 && episode > 0 {
+		if base.MatchesEpisode(title, season, episode) {
+			logger.Debugf("[TorrentService] torrent classification - '%s' classified as episode (matches s%02de%02d)", title, season, episode)
+			return "episode"
+		}
+	}
+
+	// If looking for complete season (episode == 0)
+	if season > 0 && episode == 0 {
+		// Any episode from this season can be included
+		if base.ContainsSeasonEpisode(title) {
+			// Check if it's from the right season
+			titleUpper := strings.ToUpper(title)
+			seasonPattern := fmt.Sprintf("S%02d", season)
+			if strings.Contains(titleUpper, seasonPattern) {
+				logger.Debugf("[TorrentService] torrent classification - '%s' classified as episode (part of season %d)", title, season)
+				return "episode"
+			}
+		}
 	}
 
 	return ""
@@ -478,6 +568,7 @@ func (b *BaseTorrentService) ProcessTorrents(torrents []GenericTorrent, mediaTyp
 			Title:  torrent.GetTitle(),
 			Hash:   torrent.GetHash(),
 			Source: torrent.GetSource(),
+			Size:   torrent.GetSize(),
 		}
 
 		var classification string
@@ -496,16 +587,16 @@ func (b *BaseTorrentService) ProcessTorrents(torrents []GenericTorrent, mediaTyp
 			}
 		}
 
-		// For services like EZTV that provide season/episode info directly
+		// For services that provide season/episode info directly
 		if !shouldAdd && torrent.GetSeason() > 0 && torrent.GetEpisode() > 0 {
 			// Check if this episode matches what we're looking for
 			if mediaType == "series" && season > 0 && episode > 0 {
 				if torrent.GetSeason() == season && torrent.GetEpisode() == episode {
 					classification = "episode"
 					shouldAdd = true
-					logger.Infof("[%s] episode match found - S%dE%d: %s", serviceName, season, episode, torrent.GetTitle())
+					logger.Infof("[%s] episode match found - s%02de%02d: %s", serviceName, season, episode, torrent.GetTitle())
 				} else {
-					logger.Infof("[%s] episode mismatch - found S%dE%d, requested S%dE%d: %s", serviceName, torrent.GetSeason(), torrent.GetEpisode(), season, episode, torrent.GetTitle())
+					logger.Infof("[%s] episode mismatch - found s%02de%02d, requested s%02de%02d: %s", serviceName, torrent.GetSeason(), torrent.GetEpisode(), season, episode, torrent.GetTitle())
 				}
 			} else {
 				// If no specific episode requested, accept any episode
@@ -571,34 +662,8 @@ func (y YggTorrentWrapper) GetLanguage() string { return "" } // YGG doesn't hav
 func (y YggTorrentWrapper) GetType() string     { return "" } // YGG doesn't have explicit type
 func (y YggTorrentWrapper) GetSeason() int      { return 0 }  // YGG doesn't have explicit season
 func (y YggTorrentWrapper) GetEpisode() int     { return 0 }  // YGG doesn't have explicit episode
+func (y YggTorrentWrapper) GetSize() int64      { return y.Size }
 
-type EZTVTorrentWrapper struct {
-	ID      int
-	Hash    string
-	Title   string
-	Season  string
-	Episode string
-	Source  string
-}
-
-func (e EZTVTorrentWrapper) GetID() string       { return fmt.Sprintf("%d", e.ID) }
-func (e EZTVTorrentWrapper) GetTitle() string    { return e.Title }
-func (e EZTVTorrentWrapper) GetHash() string     { return e.Hash }
-func (e EZTVTorrentWrapper) GetSource() string   { return e.Source }
-func (e EZTVTorrentWrapper) GetLanguage() string { return "VO" } // EZTV is primarily English
-func (e EZTVTorrentWrapper) GetType() string     { return "" }   // EZTV doesn't have explicit type
-func (e EZTVTorrentWrapper) GetSeason() int {
-	if seasonInt, err := strconv.Atoi(e.Season); err == nil {
-		return seasonInt
-	}
-	return 0
-}
-func (e EZTVTorrentWrapper) GetEpisode() int {
-	if episodeInt, err := strconv.Atoi(e.Episode); err == nil {
-		return episodeInt
-	}
-	return 0
-}
 
 // Helper functions to convert slices to GenericTorrent slices
 
@@ -610,18 +675,4 @@ func WrapYggTorrents(torrents []models.YggTorrent) []GenericTorrent {
 	return generic
 }
 
-func WrapEZTVTorrents(torrents []EZTVTorrent) []GenericTorrent {
-	generic := make([]GenericTorrent, len(torrents))
-	for i, torrent := range torrents {
-		generic[i] = EZTVTorrentWrapper{
-			ID:      torrent.ID,
-			Hash:    torrent.Hash,
-			Title:   torrent.Title,
-			Season:  torrent.Season,
-			Episode: torrent.Episode,
-			Source:  torrent.Source,
-		}
-	}
-	return generic
-}
 

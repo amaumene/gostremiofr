@@ -5,7 +5,7 @@ A high-performance Stremio addon for French content, written in Go. This addon i
 ## Features
 
 - 🚀 **High Performance**: Built with Go for optimal speed and low resource usage
-- 🔍 **Multiple Torrent Providers**: Supports YGG and EZTV torrent sources
+- 🔍 **Multiple Torrent Providers**: Supports YGG, EZTV, and Apibay torrent sources
 - 🎬 **TMDB Integration**: Automatic metadata enrichment with French titles
 - 📚 **Built-in Catalogs**: Self-sufficient with popular, trending, and search catalogs
 - 📺 **Full Series Support**: Complete episode listings with season/episode metadata
@@ -13,7 +13,13 @@ A high-performance Stremio addon for French content, written in Go. This addon i
 - 🔐 **Secure API Handling**: Sanitized and validated API keys with masked logging
 - 🌐 **AllDebrid Integration**: Stream torrents through AllDebrid for better performance
 - 📊 **Intelligent Sorting**: Prioritizes streams by resolution, language, and availability
+- 🏷️ **Source Tracking**: Stream results show the original torrent provider (YGG, EZTV, Apibay)
 - 🇫🇷 **French-Focused**: Catalogs and metadata optimized for French content
+- ⚡ **Sequential Processing**: Processes torrents one-by-one in quality order until a working stream is found
+- 📦 **Season Pack Support**: Intelligently extracts specific episodes from complete season torrents
+- ⏱️ **Advanced Timeout Handling**: Request-level, search-level, and rate limiter timeouts prevent hanging
+- 🎯 **Smart Prioritization**: Automatically prioritizes complete seasons over individual episodes for better quality
+- 🔄 **Episode Fallback Search**: Two-phase search strategy - first searches for season packs, then specific episodes if needed
 
 ## Prerequisites
 
@@ -139,8 +145,9 @@ gostremiofr/
 
 - **Handlers**: Process Stremio requests and coordinate services
 - **Services**: 
-  - `YGG`: Searches YGG torrent tracker
-  - `EZTV`: Searches EZTV for TV series
+  - `YGG`: Searches YGG torrent tracker (French content)
+  - `EZTV`: Searches EZTV for TV series (English content)
+  - `Apibay`: Searches The Pirate Bay API (International content)
   - `TMDB`: Fetches movie/series metadata
   - `AllDebrid`: Manages torrent downloads and streaming
 - **Cache**: LRU memory cache + BoltHold embedded database for persistence
@@ -196,8 +203,13 @@ Set the log level using the `LOG_LEVEL` environment variable.
 
 - **Caching**: TMDB results are cached for 24 hours to reduce API calls
 - **Rate Limiting**: Built-in rate limiters for all external APIs
-- **Concurrent Processing**: Parallel torrent searches and hash fetching
+- **Concurrent Torrent Search**: Parallel searches across YGG, EZTV, and Apibay with 15-second timeout
 - **Database Optimization**: Indexed queries for fast lookups
+- **Sequential Torrent Processing**: Processes best torrents one-by-one until a working stream is found
+- **Smart Season Pack Handling**: Extracts only requested episodes from complete seasons
+- **Request Timeouts**: 30-second overall timeout with multiple timeout layers
+- **Immediate Response**: Returns the first working stream without processing remaining torrents
+- **Quality Prioritization**: User-defined resolution and language preferences with size-based tiebreaking
 
 ## Security
 

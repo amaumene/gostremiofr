@@ -63,7 +63,7 @@ func InitializeServices() {
 	// Initialize services
 	tmdbService := services.NewTMDB("", tmdbMemoryCache) // empty API key for now
 	yggService := services.NewYGG(DB, tmdbMemoryCache, tmdbService)
-	eztvService := services.NewEZTV(DB, tmdbMemoryCache)
+	apibayService := services.NewApibay(DB, tmdbMemoryCache)
 	allDebridService := services.NewAllDebrid("")  // empty API key for now
 	
 	// Initialize services container
@@ -71,7 +71,7 @@ func InitializeServices() {
 		TMDB:      tmdbService,
 		AllDebrid: allDebridService,
 		YGG:       yggService,
-		EZTV:      eztvService,
+		Apibay:    apibayService,
 		Cache:     tmdbMemoryCache,
 		DB:        DB,
 		Logger:    logger.New(),

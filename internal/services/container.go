@@ -12,7 +12,7 @@ type Container struct {
 	TMDB      TMDBService
 	AllDebrid AllDebridService
 	YGG       YGGService
-	EZTV      EZTVService
+	Apibay    ApibayService
 	Cache     *cache.LRUCache
 	DB        database.Database
 	Logger    logger.Logger
@@ -37,11 +37,14 @@ type AllDebridService interface {
 
 type YGGService interface {
 	SearchTorrents(query string, category string, season, episode int) (*models.TorrentResults, error)
+	SearchTorrentsSpecificEpisode(query string, category string, season, episode int) (*models.TorrentResults, error)
 	GetTorrentHash(torrentID string) (string, error)
 	SetConfig(cfg *config.Config)
 }
 
-type EZTVService interface {
-	SearchTorrentsByIMDB(imdbID string, season, episode int) (*models.TorrentResults, error)
+
+type ApibayService interface {
+	SearchTorrents(query string, mediaType string, season, episode int) (*models.TorrentResults, error)
+	SearchTorrentsSpecificEpisode(query string, mediaType string, season, episode int) (*models.TorrentResults, error)
 	SetConfig(cfg *config.Config)
 }
