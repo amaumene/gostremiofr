@@ -261,8 +261,15 @@ func (a *AllDebrid) checkMagnetStatus(apiKey string, hashes []string) (*magnetSt
 	a.logger.Infof("[AllDebrid] checking %d specific magnets (API key: %s)", len(hashes), a.validator.MaskAPIKey(apiKey))
 	a.logger.Infof("[AllDebrid] making POST request to %s", requestURL)
 
-	// Use a standard HTTP client with longer timeout
-	httpClient := &http.Client{Timeout: allDebridAPITimeout}
+	// Use a standard HTTP client with longer timeout and connection pooling
+	httpClient := &http.Client{
+		Timeout: allDebridAPITimeout,
+		Transport: &http.Transport{
+			MaxIdleConns:        10,
+			MaxIdleConnsPerHost: 2,
+			IdleConnTimeout:     30 * time.Second,
+		},
+	}
 
 	a.logger.Infof("[AllDebrid] sending POST request...")
 	resp, err := httpClient.PostForm(requestURL, formData)

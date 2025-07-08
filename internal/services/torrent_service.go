@@ -78,6 +78,11 @@ func NewBaseTorrentService(db database.Database, cache *cache.LRUCache, rateLimi
 		rateLimiter: ratelimiter.NewTokenBucket(int64(rateLimit), int64(burstLimit)),
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:        10,
+				MaxIdleConnsPerHost: 2,
+				IdleConnTimeout:     30 * time.Second,
+			},
 		},
 		logger: logger.New(),
 	}

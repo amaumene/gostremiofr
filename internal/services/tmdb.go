@@ -42,6 +42,11 @@ func NewTMDB(apiKey string, cache *cache.LRUCache) *TMDB {
 		rateLimiter: ratelimiter.NewTokenBucket(constants.TMDBRateLimit, constants.TMDBRateBurst),
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:        10,
+				MaxIdleConnsPerHost: 2,
+				IdleConnTimeout:     30 * time.Second,
+			},
 		},
 		logger:    logger.New(),
 		validator: validator,
