@@ -18,23 +18,23 @@ import (
 
 const (
 	// YGG API endpoints
-	yggAPIBase = "https://yggapi.eu"
-	yggSearchEndpoint = "/torrents"
+	yggAPIBase         = "https://yggapi.eu"
+	yggSearchEndpoint  = "/torrents"
 	yggTorrentEndpoint = "/torrent"
-	
+
 	// YGG category IDs
-	movieCategories = "&category_id=2178&category_id=2181&category_id=2183"
+	movieCategories  = "&category_id=2178&category_id=2181&category_id=2183"
 	seriesCategories = "&category_id=2179&category_id=2181&category_id=2182&category_id=2184"
-	
+
 	// API parameters
-	defaultPage = 1
-	defaultPerPage = 100
+	defaultPage              = 1
+	defaultPerPage           = 100
 	maxConcurrentHashFetches = 5
 )
 
 type YGG struct {
 	*BaseTorrentService
-	tmdbService TMDBService
+	tmdbService     TMDBService
 	titleTranslator *frenchTitleTranslator
 }
 
@@ -73,7 +73,7 @@ func (y *YGG) SetConfig(cfg *config.Config) {
 func (y *YGG) buildAPIURL(query, category string) string {
 	encodedQuery := url.QueryEscape(query)
 	categoryParams := y.getCategoryParams(category)
-	return fmt.Sprintf("%s%s?q=%s&page=%d&per_page=%d%s", 
+	return fmt.Sprintf("%s%s?q=%s&page=%d&per_page=%d%s",
 		yggAPIBase, yggSearchEndpoint, encodedQuery, defaultPage, defaultPerPage, categoryParams)
 }
 
@@ -104,36 +104,36 @@ func (t *frenchTitleTranslator) getFrenchTitle(originalTitle string) string {
 	if t.tmdbService == nil {
 		return originalTitle
 	}
-	
+
 	// Try to find the movie/series via TMDB search
 	searchResults, err := t.tmdbService.SearchMulti(originalTitle, 1)
 	if err != nil || len(searchResults) == 0 {
 		t.logger.Debugf("[YGG] could not find French title for '%s', using original", originalTitle)
 		return originalTitle
 	}
-	
+
 	// Get the first result and fetch its French metadata
 	result := searchResults[0]
-	
+
 	// Extract TMDB ID from result ID (format: "tmdb:12345")
 	tmdbID := t.extractTMDBID(result.ID)
 	if tmdbID == "" {
 		return originalTitle
 	}
-	
+
 	// Get French metadata
 	frenchMeta, err := t.getFrenchMetadata(result.Type, tmdbID)
 	if err != nil {
 		t.logger.Debugf("[YGG] could not get French metadata for '%s', using original", originalTitle)
 		return originalTitle
 	}
-	
+
 	// Return French title if different from original
 	if frenchMeta.Name != originalTitle && frenchMeta.Name != "" {
 		t.logger.Debugf("[YGG] using French title '%s' instead of '%s'", frenchMeta.Name, originalTitle)
 		return frenchMeta.Name
 	}
-	
+
 	return originalTitle
 }
 
@@ -154,22 +154,22 @@ func (t *frenchTitleTranslator) getFrenchMetadata(mediaType, tmdbID string) (*mo
 			return meta, nil
 		}
 	}
-	
+
 	// Get API key from TMDB service
 	apiKey := t.getAPIKey()
 	if apiKey == "" {
 		return nil, fmt.Errorf("TMDB API key not available")
 	}
-	
+
 	// Build API URL based on media type
 	apiURL := t.buildTMDBURL(mediaType, tmdbID, apiKey)
-	
+
 	// Make API call
 	meta, err := t.fetchFrenchMetadata(apiURL, mediaType)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Cache the result
 	t.cache.Set(cacheKey, meta)
 	return meta, nil
@@ -191,11 +191,11 @@ func (t *frenchTitleTranslator) fetchFrenchMetadata(apiURL, mediaType string) (*
 		return nil, fmt.Errorf("failed to fetch French metadata: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("TMDB API error: status %d", resp.StatusCode)
 	}
-	
+
 	var meta models.Meta
 	if mediaType == "movie" {
 		var movieDetails models.TMDBMovieDetails
@@ -212,7 +212,7 @@ func (t *frenchTitleTranslator) fetchFrenchMetadata(apiURL, mediaType string) (*
 		meta.Name = tvDetails.Name
 		meta.Type = "series"
 	}
-	
+
 	return &meta, nil
 }
 
@@ -230,7 +230,7 @@ func (y *YGG) buildSearchQuery(query string, category string, season, episode in
 	if frenchQuery != query {
 		y.logger.Debugf("[YGG] using French title for search: '%s' -> '%s'", query, frenchQuery)
 	}
-	
+
 	// Use the base method with the French-translated query
 	return y.BaseTorrentService.BuildSearchQuery(frenchQuery, category, season, episode)
 }
@@ -240,19 +240,19 @@ func (y *YGG) SearchTorrents(query string, category string, season, episode int)
 	if result, found := y.GetCachedSearch("YGG", query, category, season, episode); found {
 		return result, nil
 	}
-	
+
 	// Build the search query in consistent format
 	searchQuery := y.buildSearchQuery(query, category, season, episode)
-	
+
 	// Use unified search method
 	result, err := y.performSearch(searchQuery, category, season, episode, false)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Cache the result using generic method
 	y.CacheSearch("YGG", query, category, season, episode, result)
-	
+
 	return result, nil
 }
 
@@ -263,15 +263,15 @@ func (y *YGG) SearchTorrentsSpecificEpisode(query string, category string, seaso
 	if frenchQuery != query {
 		y.logger.Debugf("[YGG] using French title for specific episode search: '%s' -> '%s'", query, frenchQuery)
 	}
-	
+
 	// Try episode-specific query first
 	searchQuery := y.BaseTorrentService.BuildSearchQueryWithMode(frenchQuery, category, season, episode, true)
-	
+
 	result, err := y.performSearch(searchQuery, category, season, episode, true)
 	if err == nil && len(result.EpisodeTorrents) > 0 {
 		return result, nil
 	}
-	
+
 	// If episode-specific search fails, fall back to season search and filter
 	y.logger.Infof("[YGG] episode-specific search failed, falling back to season search for s%02de%02d", season, episode)
 	seasonQuery := y.BaseTorrentService.BuildSearchQueryWithMode(frenchQuery, category, season, episode, false)
@@ -285,37 +285,37 @@ func (y *YGG) performSearch(searchQuery, category string, season, episode int, i
 		queryType = "specific episode"
 	}
 	y.logger.Infof("[YGG] searching for %s with query: %s", queryType, searchQuery)
-	
+
 	// Rate limit the API call
 	y.rateLimiter.Wait()
-	
+
 	// Build API URL
 	apiURL := y.buildAPIURL(searchQuery, category)
 	y.logger.Debugf("[YGG] API call - URL: %s", apiURL)
-	
+
 	// Fetch torrents from API
 	torrents, err := y.fetchTorrents(apiURL, queryType)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	y.logger.Infof("[YGG] received %d torrents for %s search", len(torrents), queryType)
-	
+
 	// Add source to all torrents
 	for i := range torrents {
 		torrents[i].Source = "YGG"
 	}
-	
+
 	// Process torrents
 	results := y.processTorrents(torrents, category, season, episode)
-	
+
 	// Fetch hashes for matching episode torrents
 	if category == "series" && season > 0 && episode > 0 {
 		y.fetchHashesForEpisodeTorrents(results, season, episode)
 	} else if len(results.EpisodeTorrents) > 0 {
 		y.fetchHashesForTorrents(results.EpisodeTorrents)
 	}
-	
+
 	return results, nil
 }
 
@@ -324,37 +324,37 @@ func (y *YGG) GetTorrentHash(torrentID string) (string, error) {
 	if hash, found := y.GetCachedHash("YGG", torrentID); found {
 		return hash, nil
 	}
-	
+
 	y.rateLimiter.Wait()
-	
+
 	apiURL := y.buildTorrentURL(torrentID)
 	y.logger.Debugf("[YGG] API call to get torrent hash - URL: %s", apiURL)
-	
+
 	resp, err := y.httpClient.Get(apiURL)
 	if err != nil {
 		y.logger.Errorf("[YGG] HTTP request failed for torrent %s: %v", torrentID, err)
 		return "", fmt.Errorf("failed to get torrent hash: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("YGG API returned status %d for torrent %s", resp.StatusCode, torrentID)
 	}
-	
+
 	var result struct {
 		Hash string `json:"hash"`
 	}
-	
+
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		y.logger.Errorf("[YGG] failed to decode JSON response for torrent %s: %v", torrentID, err)
 		return "", fmt.Errorf("failed to decode hash response: %w", err)
 	}
-	
+
 	y.logger.Infof("[YGG] successfully retrieved hash %s for torrent %s", result.Hash, torrentID)
-	
+
 	// Cache the hash result using generic method
 	y.CacheHash("YGG", torrentID, result.Hash)
-	
+
 	return result.Hash, nil
 }
 
@@ -365,19 +365,19 @@ func (y *YGG) fetchTorrents(apiURL, queryType string) ([]models.YggTorrent, erro
 		return nil, fmt.Errorf("failed to search YGG: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	// Check if the response is successful
 	if resp.StatusCode != http.StatusOK {
 		y.logger.Warnf("[YGG] API returned status %d for %s search", resp.StatusCode, queryType)
 		return []models.YggTorrent{}, nil
 	}
-	
+
 	// Read the response body first to check if it's valid JSON
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read YGG response: %w", err)
 	}
-	
+
 	// Check if response looks like an error message (starts with text)
 	if len(body) > 0 && body[0] != '[' && body[0] != '{' {
 		preview := string(body)
@@ -387,13 +387,13 @@ func (y *YGG) fetchTorrents(apiURL, queryType string) ([]models.YggTorrent, erro
 		y.logger.Warnf("[YGG] API returned non-JSON response for %s search: %s", queryType, preview)
 		return []models.YggTorrent{}, nil
 	}
-	
+
 	var torrents []models.YggTorrent
 	if err := json.Unmarshal(body, &torrents); err != nil {
 		y.logger.Warnf("[YGG] failed to decode %s response, returning empty results: %v", queryType, err)
 		return []models.YggTorrent{}, nil
 	}
-	
+
 	return torrents, nil
 }
 
@@ -402,22 +402,22 @@ func (y *YGG) fetchHashesForEpisodeTorrents(results *models.TorrentResults, seas
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	matchCount := 0
-	
+
 	y.logger.Infof("[YGG] searching for s%02de%02d in torrents", season, episode)
-	
+
 	for i := range results.EpisodeTorrents {
 		if y.BaseTorrentService.MatchesEpisode(results.EpisodeTorrents[i].Title, season, episode) {
 			matchCount++
 			wg.Add(1)
 			go func(index int) {
 				defer wg.Done()
-				
+
 				torrent := &results.EpisodeTorrents[index]
 				y.logger.Debugf("[YGG] fetching hash for episode match - title: %s", torrent.Title)
 				startTime := time.Now()
 				hash, err := y.GetTorrentHash(torrent.ID)
 				duration := time.Since(startTime)
-				
+
 				mu.Lock()
 				if err != nil {
 					y.logger.Errorf("[YGG] failed to fetch hash for torrent %s after %v: %v", torrent.ID, duration, err)
@@ -431,13 +431,13 @@ func (y *YGG) fetchHashesForEpisodeTorrents(results *models.TorrentResults, seas
 			y.logger.Debugf("[YGG] torrent does not match s%02de%02d - title: %s", season, episode, results.EpisodeTorrents[i].Title)
 		}
 	}
-	
+
 	if matchCount == 0 {
 		y.logger.Warnf("[YGG] NO torrents found matching s%02de%02d", season, episode)
 	} else {
 		y.logger.Infof("[YGG] found %d torrents matching s%02de%02d, fetching hashes...", matchCount, season, episode)
 	}
-	
+
 	wg.Wait()
 	y.logger.Infof("[YGG] completed hash fetching for s%02de%02d", season, episode)
 }
@@ -447,17 +447,17 @@ func (y *YGG) fetchHashesForTorrents(torrents []models.TorrentInfo) {
 	if len(torrents) == 0 {
 		return
 	}
-	
+
 	var wg sync.WaitGroup
 	semaphore := make(chan struct{}, maxConcurrentHashFetches)
-	
+
 	for i := range torrents {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }()
-			
+
 			torrent := &torrents[idx]
 			hash, err := y.GetTorrentHash(torrent.ID)
 			if err != nil {
@@ -467,7 +467,7 @@ func (y *YGG) fetchHashesForTorrents(torrents []models.TorrentInfo) {
 			torrent.Hash = hash
 		}(i)
 	}
-	
+
 	wg.Wait()
 	y.logger.Infof("[YGG] completed hash fetching for %d torrents", len(torrents))
 }
@@ -476,4 +476,3 @@ func (y *YGG) processTorrents(torrents []models.YggTorrent, category string, sea
 	genericTorrents := WrapYggTorrents(torrents)
 	return y.BaseTorrentService.ProcessTorrents(genericTorrents, category, season, episode, "YGG", 0)
 }
-

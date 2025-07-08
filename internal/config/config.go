@@ -12,19 +12,18 @@ import (
 )
 
 type Config struct {
-	TMDBAPIKey       string            `json:"TMDB_API_KEY"`
-	APIKeyAllDebrid  string            `json:"API_KEY_ALLDEBRID"`
-	ResToShow        []string          `json:"RES_TO_SHOW"`
-	LangToShow       []string          `json:"LANG_TO_SHOW"`
-	ProviderDebrid   map[string]string `json:"PROVIDER_DEBRID,omitempty"` // provider -> debrid service mapping
-	
+	TMDBAPIKey      string   `json:"TMDB_API_KEY"`
+	APIKeyAllDebrid string   `json:"API_KEY_ALLDEBRID"`
+	ResToShow       []string `json:"RES_TO_SHOW"`
+	LangToShow      []string `json:"LANG_TO_SHOW"`
+
 	DatabasePath string        `json:"DATABASE_PATH"`
 	CacheSize    int           `json:"CACHE_SIZE"`
 	CacheTTL     time.Duration `json:"CACHE_TTL"`
-	
-	resMap    map[string]bool
-	langMap   map[string]bool
-	mapsOnce  sync.Once
+
+	resMap   map[string]bool
+	langMap  map[string]bool
+	mapsOnce sync.Once
 }
 
 func Load() (*Config, error) {
@@ -33,47 +32,46 @@ func Load() (*Config, error) {
 		CacheTTL:     time.Duration(constants.DefaultCacheTTL) * time.Hour,
 		DatabasePath: getEnvOrDefault("DATABASE_PATH", "./cache.db"),
 	}
-	
+
 	if tmdbKey := os.Getenv("TMDB_API_KEY"); tmdbKey != "" {
 		cfg.TMDBAPIKey = tmdbKey
 	}
-	
+
 	if adKey := os.Getenv("API_KEY_ALLDEBRID"); adKey != "" {
 		cfg.APIKeyAllDebrid = adKey
 	}
-	
-	
+
 	configFile := os.Getenv("CONFIG_FILE")
 	if configFile == "" {
 		configFile = "config.json"
 	}
-	
+
 	if data, err := os.ReadFile(configFile); err == nil {
 		if err := json.Unmarshal(data, cfg); err != nil {
 			return nil, fmt.Errorf("failed to parse config file: %w", err)
 		}
 	}
-	
+
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
-	
+
 	cfg.InitMaps()
-	
+
 	return cfg, nil
 }
 
 func (c *Config) Validate() error {
 	// TMDB_API_KEY is now optional, configured via web interface
-	
+
 	if len(c.ResToShow) == 0 {
 		c.ResToShow = constants.DefaultResolutions
 	}
-	
+
 	if len(c.LangToShow) == 0 {
 		c.LangToShow = constants.DefaultLanguages
 	}
-	
+
 	return nil
 }
 
@@ -83,7 +81,7 @@ func (c *Config) InitMaps() {
 		for _, res := range c.ResToShow {
 			c.resMap[strings.ToLower(res)] = true
 		}
-		
+
 		c.langMap = make(map[string]bool)
 		for _, lang := range c.LangToShow {
 			c.langMap[strings.ToLower(lang)] = true
@@ -112,11 +110,11 @@ func (c *Config) GetResolutionPriority(res string) int {
 
 func (c *Config) GetLanguagePriority(title string) int {
 	titleLower := strings.ToLower(title)
-	
+
 	// Check each configured language in order of preference
 	for i, lang := range c.LangToShow {
 		langLower := strings.ToLower(lang)
-		
+
 		switch langLower {
 		case "multi", "multi_fr":
 			if strings.Contains(titleLower, "multi") {
@@ -151,31 +149,19 @@ func (c *Config) GetLanguagePriority(title string) int {
 			}
 		}
 	}
-	
-	return 0 // Not in list = lowest priority
-}
 
-// GetDebridForProvider returns the debrid service configured for a specific provider
-// Falls back to AllDebrid if no specific configuration exists
-func (c *Config) GetDebridForProvider(provider string) string {
-	if c.ProviderDebrid != nil {
-		if debrid, ok := c.ProviderDebrid[strings.ToLower(provider)]; ok && debrid != "" {
-			return debrid
-		}
-	}
-	// Default to AllDebrid
-	return "alldebrid"
+	return 0 // Not in list = lowest priority
 }
 
 // CreateFromUserData creates a config from user-provided data and existing config
 func CreateFromUserData(userConfig map[string]interface{}, baseConfig *Config) *Config {
 	cfg := &Config{}
-	
+
 	// Copy from existing config if available
 	if baseConfig != nil {
 		*cfg = *baseConfig
 	}
-	
+
 	if val, ok := userConfig["RES_TO_SHOW"]; ok {
 		if arr, ok := val.([]interface{}); ok {
 			cfg.ResToShow = make([]string, len(arr))
@@ -186,7 +172,7 @@ func CreateFromUserData(userConfig map[string]interface{}, baseConfig *Config) *
 			}
 		}
 	}
-	
+
 	if val, ok := userConfig["LANG_TO_SHOW"]; ok {
 		if arr, ok := val.([]interface{}); ok {
 			cfg.LangToShow = make([]string, len(arr))
@@ -197,34 +183,23 @@ func CreateFromUserData(userConfig map[string]interface{}, baseConfig *Config) *
 			}
 		}
 	}
-	
+
 	if val, ok := userConfig["TMDB_API_KEY"]; ok {
 		if str, ok := val.(string); ok {
 			cfg.TMDBAPIKey = str
 		}
 	}
-	
+
 	if val, ok := userConfig["API_KEY_ALLDEBRID"]; ok {
 		if str, ok := val.(string); ok {
 			cfg.APIKeyAllDebrid = str
 		}
 	}
-	
-	if val, ok := userConfig["PROVIDER_DEBRID"]; ok {
-		if providerMap, ok := val.(map[string]interface{}); ok {
-			cfg.ProviderDebrid = make(map[string]string)
-			for provider, debrid := range providerMap {
-				if debridStr, ok := debrid.(string); ok {
-					cfg.ProviderDebrid[strings.ToLower(provider)] = debridStr
-				}
-			}
-		}
-	}
-	
+
 	// Validate and initialize the config
 	cfg.Validate()
 	cfg.InitMaps()
-	
+
 	return cfg
 }
 

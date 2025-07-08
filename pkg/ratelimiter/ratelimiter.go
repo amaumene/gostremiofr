@@ -28,7 +28,7 @@ func NewTokenBucket(capacity, refillRate int64) *TokenBucket {
 	if refillRate <= 0 {
 		refillRate = 1
 	}
-	
+
 	return &TokenBucket{
 		capacity:   capacity,
 		tokens:     capacity,
@@ -43,7 +43,7 @@ func (tb *TokenBucket) TakeToken() bool {
 
 	now := time.Now()
 	elapsed := now.Sub(tb.lastRefill)
-	
+
 	tokensToAdd := int64(elapsed.Seconds()) * tb.refillRate
 	tb.tokens = min(tb.capacity, tb.tokens+tokensToAdd)
 	tb.lastRefill = now
@@ -62,13 +62,13 @@ func (tb *TokenBucket) Wait() {
 
 func (tb *TokenBucket) WaitWithTimeout(timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
-	
+
 	// Calculate wait time based on refill rate
 	waitTime := time.Second / time.Duration(tb.refillRate)
 	if waitTime < 100*time.Millisecond {
 		waitTime = 100 * time.Millisecond
 	}
-	
+
 	for !tb.TakeToken() {
 		if time.Now().After(deadline) {
 			return fmt.Errorf("rate limiter timeout after %v", timeout)

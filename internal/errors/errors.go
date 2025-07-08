@@ -27,12 +27,12 @@ func (e *StreamError) Unwrap() error {
 // Error type constants
 const (
 	ErrorTypeConfigurationInvalid = "CONFIGURATION_INVALID"
-	ErrorTypeAPIKeyMissing       = "API_KEY_MISSING"
-	ErrorTypeTMDBFailure         = "TMDB_FAILURE"
-	ErrorTypeTorrentSearchFailed = "TORRENT_SEARCH_FAILED"
-	ErrorTypeMagnetProcessFailed = "MAGNET_PROCESS_FAILED"
-	ErrorTypeTimeout             = "TIMEOUT"
-	ErrorTypeInvalidID           = "INVALID_ID"
+	ErrorTypeAPIKeyMissing        = "API_KEY_MISSING"
+	ErrorTypeTMDBFailure          = "TMDB_FAILURE"
+	ErrorTypeTorrentSearchFailed  = "TORRENT_SEARCH_FAILED"
+	ErrorTypeMagnetProcessFailed  = "MAGNET_PROCESS_FAILED"
+	ErrorTypeTimeout              = "TIMEOUT"
+	ErrorTypeInvalidID            = "INVALID_ID"
 )
 
 // NewStreamError creates a new StreamError

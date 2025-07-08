@@ -6,7 +6,7 @@ type TorrentInfo struct {
 	Title  string
 	Hash   string
 	Source string
-	Size   int64  // Size in bytes
+	Size   int64 // Size in bytes
 }
 
 type YggTorrent struct {
@@ -57,15 +57,15 @@ type VideoFile struct {
 }
 
 type EpisodeFile struct {
-	Name           string
-	Size           float64
-	Link           string
-	Source         string
-	Season         int
-	Episode        int
-	Resolution     string
-	Language       string
-	SeasonTorrent  TorrentInfo // Reference to the complete season torrent
+	Name          string
+	Size          float64
+	Link          string
+	Source        string
+	Season        int
+	Episode       int
+	Resolution    string
+	Language      string
+	SeasonTorrent TorrentInfo // Reference to the complete season torrent
 }
 
 type FileInfo struct {

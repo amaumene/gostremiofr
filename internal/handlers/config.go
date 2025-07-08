@@ -104,12 +104,6 @@ func (h *Handler) handleConfig(c *gin.Context) {
           document.getElementById('lang').value = (decodedConfig.LANG_TO_SHOW || []).join(",");
           document.getElementById('alldebrid').value = decodedConfig.API_KEY_ALLDEBRID || "";
           
-          // Load provider debrid configuration
-          if (decodedConfig.PROVIDER_DEBRID) {
-            if (decodedConfig.PROVIDER_DEBRID.ygg) {
-              document.getElementById('ygg_debrid').value = decodedConfig.PROVIDER_DEBRID.ygg;
-            }
-          }
         } catch (error) {
           console.error("Error decoding configuration:", error);
         }
@@ -121,10 +115,7 @@ func (h *Handler) handleConfig(c *gin.Context) {
         TMDB_API_KEY: document.getElementById('tmdb').value,
         RES_TO_SHOW: document.getElementById('res').value.split(',').map(s => s.trim()).filter(s => s),
         LANG_TO_SHOW: document.getElementById('lang').value.split(',').map(s => s.trim()).filter(s => s),
-        API_KEY_ALLDEBRID: document.getElementById('alldebrid').value,
-        PROVIDER_DEBRID: {
-          ygg: document.getElementById('ygg_debrid').value
-        }
+        API_KEY_ALLDEBRID: document.getElementById('alldebrid').value
       };
       const encodedConfig = btoa(JSON.stringify(config));
       
@@ -174,25 +165,13 @@ func (h *Handler) handleConfig(c *gin.Context) {
     <label for="alldebrid">Clé API AllDebrid</label>
     <input type="text" id="alldebrid" placeholder="Entrez votre clé API AllDebrid">
     
-    <label style="margin-top: 20px; margin-bottom: 10px; display: block;">
-      <strong>Configuration des débrideurs par fournisseur</strong>
-      <br><small style="color: #666;">Choisissez le débrideur à utiliser pour chaque fournisseur de torrents</small>
-    </label>
-    
-    <div style="background-color: #f1f3f5; border-radius: 4px; padding: 15px; margin-bottom: 10px;">
-      <label for="ygg_debrid" style="margin-top: 0;">YGG :</label>
-      <select id="ygg_debrid" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; margin-top: 5px;">
-        <option value="alldebrid" selected>AllDebrid</option>
-      </select>
-    </div>
-    
     
     <button onclick="generateConfig()">Générer la configuration</button>
     <div id="result" class="result"></div>
   </div>
 </body>
 </html>`
-	
+
 	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(html))
 }
 

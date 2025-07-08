@@ -15,11 +15,11 @@ import (
 )
 
 type LocalIPCertificate struct {
-	logger    logger.Logger
-	cacheDir  string
-	certPath  string
-	keyPath   string
-	hostname  string
+	logger   logger.Logger
+	cacheDir string
+	certPath string
+	keyPath  string
+	hostname string
 }
 
 // NewLocalIPCertificate creates a new LocalIPCertificate instance
@@ -131,7 +131,7 @@ func (l *LocalIPCertificate) downloadCertificates() error {
 	// Download certificate
 	certURL := "https://local-ip.sh/server.pem"
 	l.logger.Debugf("[SSL] downloading certificate from %s", certURL)
-	
+
 	if err := l.downloadFile(client, certURL, l.certPath); err != nil {
 		return fmt.Errorf("failed to download certificate: %w", err)
 	}
@@ -139,7 +139,7 @@ func (l *LocalIPCertificate) downloadCertificates() error {
 	// Download private key
 	keyURL := "https://local-ip.sh/server.key"
 	l.logger.Debugf("[SSL] downloading private key from %s", keyURL)
-	
+
 	if err := l.downloadFile(client, keyURL, l.keyPath); err != nil {
 		return fmt.Errorf("failed to download private key: %w", err)
 	}

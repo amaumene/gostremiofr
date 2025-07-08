@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/amaumene/gostremiofr/pkg/logger"
+	"github.com/gin-gonic/gin"
 )
 
 type gzipResponseWriter struct {
@@ -49,12 +49,12 @@ func CORS() gin.HandlerFunc {
 		c.Header("Access-Control-Allow-Origin", "*")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Accept")
-		
+
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
 			return
 		}
-		
+
 		c.Next()
 	}
 }
@@ -71,7 +71,7 @@ func Logger(log logger.Logger) gin.HandlerFunc {
 		clientIP := c.ClientIP()
 		method := c.Request.Method
 		statusCode := c.Writer.Status()
-		
+
 		if raw != "" {
 			path = path + "?" + raw
 		}

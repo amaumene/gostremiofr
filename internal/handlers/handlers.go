@@ -3,9 +3,9 @@ package handlers
 import (
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	"github.com/amaumene/gostremiofr/internal/config"
 	"github.com/amaumene/gostremiofr/internal/services"
+	"github.com/gin-gonic/gin"
 )
 
 type Handler struct {
@@ -23,23 +23,23 @@ func New(services *services.Container, config *config.Config) *Handler {
 func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	// Home route
 	r.GET("/", h.handleHome)
-	
+
 	// Configuration routes
 	r.GET("/config", h.handleConfig)
 	r.GET("/configure", h.handleConfig) // Alias for compatibility
 	r.GET("/:configuration/configure", h.handleConfigWithParams)
-	
+
 	// Manifest routes
 	r.GET("/manifest.json", h.handleManifest)
 	r.GET("/:configuration/manifest.json", h.handleManifestWithConfig)
-	
+
 	// Catalog routes - handle both with and without .json in the handler
 	r.GET("/:configuration/catalog/:type/:id", h.handleCatalogWrapper)
 	r.GET("/:configuration/catalog/:type/:id/*extra", h.handleCatalogWrapper)
-	
+
 	// Meta routes - handle both with and without .json in the handler
 	r.GET("/:configuration/meta/:type/:id", h.handleMetaWrapper)
-	
+
 	// Stream routes - handle both with and without .json in the handler
 	r.GET("/:configuration/stream/:type/:id", h.handleStreamWrapper)
 }
@@ -63,7 +63,7 @@ func (h *Handler) handleCatalogWrapper(c *gin.Context) {
 			Value: strings.TrimSuffix(id, ".json"),
 		})
 	}
-	
+
 	// Handle extra path parameters (e.g., /catalog/movie/search/search=term.json)
 	extra := c.Param("extra")
 	if extra != "" {
@@ -71,7 +71,7 @@ func (h *Handler) handleCatalogWrapper(c *gin.Context) {
 		extra = strings.TrimPrefix(extra, "/")
 		// Remove .json extension if present
 		extra = strings.TrimSuffix(extra, ".json")
-		
+
 		// Parse path-based parameters (e.g., "search=term&genre=28")
 		params := strings.Split(extra, "&")
 		for _, param := range params {
@@ -83,13 +83,13 @@ func (h *Handler) handleCatalogWrapper(c *gin.Context) {
 				c.Request.URL.RawQuery = c.Request.URL.RawQuery + "&" + key + "=" + value
 			}
 		}
-		
+
 		// Clean up the query string
 		if strings.HasPrefix(c.Request.URL.RawQuery, "&") {
 			c.Request.URL.RawQuery = strings.TrimPrefix(c.Request.URL.RawQuery, "&")
 		}
 	}
-	
+
 	h.handleCatalog(c)
 }
 

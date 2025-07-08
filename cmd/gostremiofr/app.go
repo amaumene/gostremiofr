@@ -40,7 +40,7 @@ func InitializeLogger() {
 
 func InitializeDatabase() {
 	var err error
-	
+
 	// Get database directory from environment variable, default to current directory
 	dbDir := os.Getenv("DATABASE_DIR")
 	if dbDir == "" {
@@ -64,8 +64,8 @@ func InitializeServices() {
 	tmdbService := services.NewTMDB("", tmdbMemoryCache) // empty API key for now
 	yggService := services.NewYGG(DB, tmdbMemoryCache, tmdbService)
 	apibayService := services.NewApibay(DB, tmdbMemoryCache)
-	allDebridService := services.NewAllDebrid("")  // empty API key for now
-	
+	allDebridService := services.NewAllDebrid("") // empty API key for now
+
 	// Initialize services container
 	serviceContainer := &services.Container{
 		TMDB:      tmdbService,

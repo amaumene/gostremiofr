@@ -8,8 +8,8 @@ const (
 	AddonDescription = "French torrent addon with YGG, EZTV, AllDebrid integration and TMDB catalogs"
 
 	// Default configuration values
-	DefaultPort        = "5000"
-	DefaultLogLevel    = "info"
+	DefaultPort     = "5000"
+	DefaultLogLevel = "info"
 
 	// Cache settings
 	DefaultCacheSize = 1000

@@ -2,14 +2,14 @@
 package models
 
 type Manifest struct {
-	ID            string         `json:"id"`
-	Version       string         `json:"version"`
-	Name          string         `json:"name"`
-	Description   string         `json:"description"`
-	Types         []string       `json:"types"`
-	Resources     []string       `json:"resources"`
-	Catalogs      []Catalog      `json:"catalogs"`
-	BehaviorHints BehaviorHints  `json:"behaviorHints"`
+	ID            string        `json:"id"`
+	Version       string        `json:"version"`
+	Name          string        `json:"name"`
+	Description   string        `json:"description"`
+	Types         []string      `json:"types"`
+	Resources     []string      `json:"resources"`
+	Catalogs      []Catalog     `json:"catalogs"`
+	BehaviorHints BehaviorHints `json:"behaviorHints"`
 }
 
 type BehaviorHints struct {

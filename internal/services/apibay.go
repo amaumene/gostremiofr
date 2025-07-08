@@ -17,18 +17,18 @@ import (
 
 const (
 	// Apibay API configuration
-	apibayAPIBase = "https://apibay.org"
+	apibayAPIBase        = "https://apibay.org"
 	apibaySearchEndpoint = "/q.php"
-	apibayVideoCategory = "video"
-	
+	apibayVideoCategory  = "video"
+
 	// Cache keys
 	apibayGeneralCacheKey = "APIBAY"
 	apibayEpisodeCacheKey = "APIBAY_EPISODE"
-	
+
 	// Rate limiting
-	apibayRateLimit = 5 // requests per second
+	apibayRateLimit  = 5 // requests per second
 	apibayCacheBurst = 2
-	
+
 	// Logging
 	apibayLogLimit = 5 // number of torrents to log for debugging
 )
@@ -74,12 +74,12 @@ func newYearExtractor() *yearExtractor {
 		`\b(19\d{2})\b`, // 19xx
 		`\b(20\d{2})\b`, // 20xx
 	}
-	
+
 	compiled := make([]*regexp.Regexp, len(patterns))
 	for i, pattern := range patterns {
 		compiled[i] = regexp.MustCompile(pattern)
 	}
-	
+
 	return &yearExtractor{patterns: compiled}
 }
 
@@ -110,7 +110,7 @@ func (a *Apibay) performSearch(query string, mediaType string, season, episode i
 	// Build search query and API URL
 	searchQuery := a.buildSearchQueryWithMode(query, mediaType, season, episode, specificEpisode)
 	apiURL := a.buildAPIURL(searchQuery)
-	
+
 	a.logger.Infof("[APIBAY] API call to search torrents - URL: %s", apiURL)
 
 	// Fetch torrents from API
@@ -126,7 +126,7 @@ func (a *Apibay) performSearch(query string, mediaType string, season, episode i
 	// Process and cache results
 	results := a.processTorrents(torrents, mediaType, season, episode)
 	a.CacheSearch(cacheKey, query, mediaType, season, episode, results)
-	
+
 	return results, nil
 }
 
@@ -140,7 +140,7 @@ func (a *Apibay) getCacheKey(specificEpisode bool) string {
 
 // buildAPIURL constructs the Apibay API URL
 func (a *Apibay) buildAPIURL(searchQuery string) string {
-	return fmt.Sprintf("%s%s?q=%s&cat=%s", 
+	return fmt.Sprintf("%s%s?q=%s&cat=%s",
 		apibayAPIBase, apibaySearchEndpoint, url.QueryEscape(searchQuery), apibayVideoCategory)
 }
 
@@ -175,7 +175,7 @@ func (a *Apibay) processTorrentMetadata(torrents []ApibayTorrent) {
 		torrents[i].Source = "APIBAY"
 		// Log first few torrents for debugging
 		if i < apibayLogLimit {
-			a.logger.Infof("[APIBAY] torrent %d: %s (hash: %s, seeders: %s)", 
+			a.logger.Infof("[APIBAY] torrent %d: %s (hash: %s, seeders: %s)",
 				i+1, torrents[i].Name, torrents[i].InfoHash, torrents[i].Seeders)
 		}
 	}
@@ -193,7 +193,7 @@ func (a *Apibay) extractYearFromTorrents(torrents []ApibayTorrent, mediaType str
 	if mediaType != "movie" {
 		return 0
 	}
-	
+
 	// Try to extract year from torrent names
 	for _, torrent := range torrents {
 		if year := a.yearExtractor.extractYear(torrent.Name); year > 0 {
@@ -220,11 +220,11 @@ type ApibayTorrentWrapper struct {
 	ApibayTorrent
 }
 
-func (a ApibayTorrentWrapper) GetID() string       { return a.ID }
-func (a ApibayTorrentWrapper) GetTitle() string    { return a.Name }
-func (a ApibayTorrentWrapper) GetHash() string     { 
+func (a ApibayTorrentWrapper) GetID() string    { return a.ID }
+func (a ApibayTorrentWrapper) GetTitle() string { return a.Name }
+func (a ApibayTorrentWrapper) GetHash() string {
 	// Apibay returns uppercase hashes, convert to lowercase for consistency
-	return strings.ToLower(a.InfoHash) 
+	return strings.ToLower(a.InfoHash)
 }
 func (a ApibayTorrentWrapper) GetSource() string   { return a.Source }
 func (a ApibayTorrentWrapper) GetLanguage() string { return "" } // Parse from title

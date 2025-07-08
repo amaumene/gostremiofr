@@ -20,17 +20,17 @@ import (
 
 const (
 	// AllDebrid API configuration
-	allDebridAPIBase = "https://api.alldebrid.com/v4"
+	allDebridAPIBase      = "https://api.alldebrid.com/v4"
 	allDebridMagnetStatus = "/magnet/status"
-	allDebridAgent = "stremio"
-	
+	allDebridAgent        = "stremio"
+
 	// HTTP timeouts
 	allDebridAPITimeout = 60 * time.Second
-	
+
 	// Status codes
-	allDebridStatusReady = 4
+	allDebridStatusReady   = 4
 	allDebridStatusSuccess = "success"
-	
+
 	// Video file extensions
 	videoExtensions = ".mp4,.mkv,.avi,.mov,.wmv,.flv,.webm,.m4v,.mpg,.mpeg"
 )
@@ -53,10 +53,10 @@ type fileParsers struct {
 
 func NewAllDebrid(apiKey string) *AllDebrid {
 	validator := security.NewAPIKeyValidator()
-	
+
 	// Sanitize the API key
 	sanitizedKey := validator.SanitizeAPIKey(apiKey)
-	
+
 	return &AllDebrid{
 		apiKey:      sanitizedKey,
 		rateLimiter: ratelimiter.NewTokenBucket(constants.AllDebridRateLimit, constants.AllDebridRateBurst),
@@ -71,12 +71,12 @@ func NewAllDebrid(apiKey string) *AllDebrid {
 func newFileParsers() *fileParsers {
 	// Episode patterns
 	episodePatterns := []string{
-		`(?i)s(\d{1,2})e(\d{1,2})`,      // S01E01
-		`(?i)s(\d{1,2})\.e(\d{1,2})`,    // S01.E01
-		`(?i)(\d{1,2})x(\d{1,2})`,       // 1x01
+		`(?i)s(\d{1,2})e(\d{1,2})`,                     // S01E01
+		`(?i)s(\d{1,2})\.e(\d{1,2})`,                   // S01.E01
+		`(?i)(\d{1,2})x(\d{1,2})`,                      // 1x01
 		`(?i)season\s*(\d{1,2})\s*episode\s*(\d{1,2})`, // Season 1 Episode 1
 	}
-	
+
 	// Resolution patterns
 	resolutionPatterns := []string{
 		`(?i)(2160p|4k)`,
@@ -85,25 +85,25 @@ func newFileParsers() *fileParsers {
 		`(?i)(480p)`,
 		`(?i)(360p)`,
 	}
-	
+
 	// Compile episode patterns
 	compiledEpisode := make([]*regexp.Regexp, len(episodePatterns))
 	for i, pattern := range episodePatterns {
 		compiledEpisode[i] = regexp.MustCompile(pattern)
 	}
-	
+
 	// Compile resolution patterns
 	compiledResolution := make([]*regexp.Regexp, len(resolutionPatterns))
 	for i, pattern := range resolutionPatterns {
 		compiledResolution[i] = regexp.MustCompile(pattern)
 	}
-	
+
 	// Video extensions set
 	videoExtSet := make(map[string]bool)
 	for _, ext := range strings.Split(videoExtensions, ",") {
 		videoExtSet[ext] = true
 	}
-	
+
 	return &fileParsers{
 		episodePatterns:    compiledEpisode,
 		resolutionPatterns: compiledResolution,
@@ -117,23 +117,23 @@ func (a *AllDebrid) CheckMagnets(magnets []models.MagnetInfo, apiKey string) ([]
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Build hash list for the API call
 	hashes, hashToMagnet := a.buildHashMapping(magnets)
-	
+
 	a.rateLimiter.Wait()
-	
+
 	// Make API call to check magnet status
 	response, err := a.checkMagnetStatus(apiKey, hashes)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Process response into structured data
 	processed := a.processMagnetResponse(response, hashToMagnet)
-	
+
 	a.logger.Debugf("[AllDebrid] API call returned %d results for %d requested magnets", len(processed), len(magnets))
-	
+
 	return processed, nil
 }
 
@@ -143,17 +143,17 @@ func (a *AllDebrid) UploadMagnet(hash, title, apiKey string) error {
 	if err != nil {
 		return err
 	}
-	
+
 	a.rateLimiter.Wait()
-	
+
 	magnetURL := fmt.Sprintf("magnet:?xt=urn:btih:%s&dn=%s", hash, url.QueryEscape(title))
-	
+
 	// Use our local client
 	resp, err := a.client.UploadMagnet(apiKey, []string{magnetURL})
 	if err != nil {
 		return fmt.Errorf("failed to upload magnet: %w", err)
 	}
-	
+
 	// Check response status and errors
 	return a.checkAPIResponse(resp.Status, resp.Error, resp.Data.Magnets)
 }
@@ -164,15 +164,15 @@ func (a *AllDebrid) GetEpisodeFiles(magnetID string, seasonTorrent models.Torren
 	if err != nil {
 		return nil, err
 	}
-	
+
 	a.rateLimiter.Wait()
-	
+
 	// Get magnet files
 	resp, err := a.client.GetMagnetFiles(apiKey, magnetID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get episode files: %w", err)
 	}
-	
+
 	// Check response status
 	if resp.Status != allDebridStatusSuccess {
 		if resp.Error != nil {
@@ -180,10 +180,10 @@ func (a *AllDebrid) GetEpisodeFiles(magnetID string, seasonTorrent models.Torren
 		}
 		return nil, fmt.Errorf("AllDebrid API error: %s", resp.Status)
 	}
-	
+
 	// Process files into episode files
 	episodeFiles := a.processEpisodeFiles(resp.Data.Magnets, seasonTorrent)
-	
+
 	a.logger.Debugf("[AllDebrid] extracted %d episode files from season torrent %s", len(episodeFiles), seasonTorrent.Title)
 	return episodeFiles, nil
 }
@@ -194,15 +194,15 @@ func (a *AllDebrid) GetVideoFiles(magnetID, apiKey string) ([]models.VideoFile, 
 	if err != nil {
 		return nil, err
 	}
-	
+
 	a.rateLimiter.Wait()
-	
+
 	// Get magnet files
 	resp, err := a.client.GetMagnetFiles(apiKey, magnetID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get video files: %w", err)
 	}
-	
+
 	// Check response status
 	if resp.Status != allDebridStatusSuccess {
 		if resp.Error != nil {
@@ -210,10 +210,10 @@ func (a *AllDebrid) GetVideoFiles(magnetID, apiKey string) ([]models.VideoFile, 
 		}
 		return nil, fmt.Errorf("AllDebrid API error: %s", resp.Status)
 	}
-	
+
 	// Process files into video files
 	videoFiles := a.processVideoFiles(resp.Data.Magnets)
-	
+
 	return videoFiles, nil
 }
 
@@ -223,24 +223,24 @@ func (a *AllDebrid) UnlockLink(link, apiKey string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	
+
 	a.rateLimiter.Wait()
-	
+
 	// Use our local client
 	resp, err := a.client.UnlockLink(apiKey, link)
 	if err != nil {
 		return "", fmt.Errorf("failed to unlock link: %w", err)
 	}
-	
+
 	// Check response status
 	if err := a.checkAPIResponse(resp.Status, resp.Error, nil); err != nil {
 		return "", err
 	}
-	
+
 	if resp.Data.Link == "" {
 		return "", fmt.Errorf("no direct link returned from unlock API")
 	}
-	
+
 	return resp.Data.Link, nil
 }
 
@@ -251,14 +251,14 @@ func (a *AllDebrid) validateAndPrepareAPIKey(apiKey string) (string, error) {
 	if apiKey == "" {
 		apiKey = a.apiKey
 	}
-	
+
 	// Sanitize and validate the API key
 	apiKey = a.validator.SanitizeAPIKey(apiKey)
 	if !a.validator.IsValidAllDebridKey(apiKey) {
 		a.logger.Errorf("[AllDebrid] invalid API key format (key: %s)", a.validator.MaskAPIKey(apiKey))
 		return "", fmt.Errorf("invalid AllDebrid API key format")
 	}
-	
+
 	return apiKey, nil
 }
 
@@ -266,12 +266,12 @@ func (a *AllDebrid) validateAndPrepareAPIKey(apiKey string) (string, error) {
 func (a *AllDebrid) buildHashMapping(magnets []models.MagnetInfo) ([]string, map[string]models.MagnetInfo) {
 	var hashes []string
 	hashToMagnet := make(map[string]models.MagnetInfo)
-	
+
 	for _, magnet := range magnets {
 		hashes = append(hashes, magnet.Hash)
 		hashToMagnet[magnet.Hash] = magnet
 	}
-	
+
 	return hashes, hashToMagnet
 }
 
@@ -279,7 +279,7 @@ func (a *AllDebrid) buildHashMapping(magnets []models.MagnetInfo) ([]string, map
 func (a *AllDebrid) checkMagnetStatus(apiKey string, hashes []string) (*magnetStatusResponse, error) {
 	// Use POST to avoid exposing API key in URL
 	requestURL := allDebridAPIBase + allDebridMagnetStatus
-	
+
 	// Prepare form data
 	formData := url.Values{}
 	formData.Set("agent", allDebridAgent)
@@ -287,13 +287,13 @@ func (a *AllDebrid) checkMagnetStatus(apiKey string, hashes []string) (*magnetSt
 	for _, hash := range hashes {
 		formData.Add("magnets[]", hash)
 	}
-	
+
 	a.logger.Infof("[AllDebrid] checking %d specific magnets (API key: %s)", len(hashes), a.validator.MaskAPIKey(apiKey))
 	a.logger.Infof("[AllDebrid] making POST request to %s", requestURL)
-	
+
 	// Use a standard HTTP client with longer timeout
 	httpClient := &http.Client{Timeout: allDebridAPITimeout}
-	
+
 	a.logger.Infof("[AllDebrid] sending POST request...")
 	resp, err := httpClient.PostForm(requestURL, formData)
 	if err != nil {
@@ -302,20 +302,20 @@ func (a *AllDebrid) checkMagnetStatus(apiKey string, hashes []string) (*magnetSt
 	}
 	a.logger.Infof("[AllDebrid] received HTTP response with status: %s", resp.Status)
 	defer resp.Body.Close()
-	
+
 	// Parse the response
 	var response magnetStatusResponse
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
-	
+
 	if response.Status != allDebridStatusSuccess {
 		if response.Error.Message != "" {
 			return nil, fmt.Errorf("AllDebrid API error: %s - %s", response.Error.Code, response.Error.Message)
 		}
 		return nil, fmt.Errorf("AllDebrid API error: %s", response.Status)
 	}
-	
+
 	return &response, nil
 }
 
@@ -330,10 +330,10 @@ func (a *AllDebrid) processMagnetResponse(response *magnetStatusResponse, hashTo
 			if name == "" {
 				name = original.Title
 			}
-			
-			a.logger.Debugf("[AllDebrid] magnet processing details - hash: %s, statusCode: %d, links: %d, ready: %v", 
+
+			a.logger.Debugf("[AllDebrid] magnet processing details - hash: %s, statusCode: %d, links: %d, ready: %v",
 				magnet.Hash, magnet.StatusCode, len(magnet.Links), ready)
-			
+
 			processed = append(processed, models.ProcessedMagnet{
 				Hash:   magnet.Hash,
 				Ready:  ready,
@@ -362,23 +362,23 @@ func (a *AllDebrid) checkAPIResponse(status string, apiError interface{}, magnet
 		}
 		return fmt.Errorf("AllDebrid API error: %s", status)
 	}
-	
+
 	// Check for upload-specific errors
 	if magnets != nil {
 		// This assumes the magnets slice has upload error information
 		// Implementation would depend on the specific data structure
 	}
-	
+
 	return nil
 }
 
 // processEpisodeFiles processes magnet links into episode files
 func (a *AllDebrid) processEpisodeFiles(magnets []struct {
-	ID    int64 `json:"id"`
+	ID    int64  `json:"id"`
 	Hash  string `json:"hash"`
 	Name  string `json:"name"`
-	Size  int64 `json:"size"`
-	Ready bool  `json:"ready"`
+	Size  int64  `json:"size"`
+	Ready bool   `json:"ready"`
 	Links []struct {
 		Link     string `json:"link"`
 		Filename string `json:"filename"`
@@ -386,7 +386,7 @@ func (a *AllDebrid) processEpisodeFiles(magnets []struct {
 	} `json:"links"`
 }, seasonTorrent models.TorrentInfo) []models.EpisodeFile {
 	var episodeFiles []models.EpisodeFile
-	
+
 	for _, magnet := range magnets {
 		a.logger.Debugf("[AllDebrid] processing magnet with %d links", len(magnet.Links))
 		for _, link := range magnet.Links {
@@ -395,14 +395,14 @@ func (a *AllDebrid) processEpisodeFiles(magnets []struct {
 				// Parse episode info from filename
 				season, episode := a.fileParsers.parseEpisodeFromFilename(link.Filename)
 				a.logger.Debugf("[AllDebrid] parsed episode info from '%s': S%02dE%02d", link.Filename, season, episode)
-				
+
 				if season > 0 && episode > 0 {
 					resolution := a.fileParsers.parseResolutionFromFilename(link.Filename)
 					language := parseLanguageFromFilename(link.Filename)
-					
-					a.logger.Debugf("[AllDebrid] adding episode file: S%02dE%02d - %s (%s, %s)", 
+
+					a.logger.Debugf("[AllDebrid] adding episode file: S%02dE%02d - %s (%s, %s)",
 						season, episode, link.Filename, resolution, language)
-					
+
 					episodeFiles = append(episodeFiles, models.EpisodeFile{
 						Name:          link.Filename,
 						Size:          float64(link.Size),
@@ -422,17 +422,17 @@ func (a *AllDebrid) processEpisodeFiles(magnets []struct {
 			}
 		}
 	}
-	
+
 	return episodeFiles
 }
 
-// processVideoFiles processes magnet links into video files  
+// processVideoFiles processes magnet links into video files
 func (a *AllDebrid) processVideoFiles(magnets []struct {
-	ID    int64 `json:"id"`
+	ID    int64  `json:"id"`
 	Hash  string `json:"hash"`
 	Name  string `json:"name"`
-	Size  int64 `json:"size"`
-	Ready bool  `json:"ready"`
+	Size  int64  `json:"size"`
+	Ready bool   `json:"ready"`
 	Links []struct {
 		Link     string `json:"link"`
 		Filename string `json:"filename"`
@@ -440,7 +440,7 @@ func (a *AllDebrid) processVideoFiles(magnets []struct {
 	} `json:"links"`
 }) []models.VideoFile {
 	var videoFiles []models.VideoFile
-	
+
 	for _, magnet := range magnets {
 		for _, link := range magnet.Links {
 			if a.fileParsers.isVideoFile(link.Filename) {
@@ -453,7 +453,7 @@ func (a *AllDebrid) processVideoFiles(magnets []struct {
 			}
 		}
 	}
-	
+
 	return videoFiles
 }
 
@@ -519,7 +519,7 @@ func parseResolutionFromFilename(filename string) string {
 
 func parseLanguageFromFilename(filename string) string {
 	filename = strings.ToLower(filename)
-	
+
 	if strings.Contains(filename, "multi") {
 		return "multi"
 	}
@@ -532,7 +532,7 @@ func parseLanguageFromFilename(filename string) string {
 	if strings.Contains(filename, "english") || strings.Contains(filename, "vo") {
 		return "english"
 	}
-	
+
 	return "unknown"
 }
 

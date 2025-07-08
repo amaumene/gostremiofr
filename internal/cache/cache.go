@@ -43,16 +43,16 @@ func (c *LRUCache) Get(key string) (interface{}, bool) {
 
 	if elem, ok := c.items[key]; ok {
 		item := elem.Value.(*Item)
-		
+
 		if time.Now().After(item.Expiration) {
 			c.removeElement(elem)
 			return nil, false
 		}
-		
+
 		c.evictList.MoveToFront(elem)
 		return item.Value, true
 	}
-	
+
 	return nil, false
 }
 
@@ -61,7 +61,7 @@ func (c *LRUCache) Set(key string, value interface{}) {
 	defer c.mu.Unlock()
 
 	expiration := time.Now().Add(c.ttl)
-	
+
 	if elem, ok := c.items[key]; ok {
 		item := elem.Value.(*Item)
 		item.Value = value
@@ -75,7 +75,7 @@ func (c *LRUCache) Set(key string, value interface{}) {
 		Value:      value,
 		Expiration: expiration,
 	}
-	
+
 	elem := c.evictList.PushFront(item)
 	c.items[key] = elem
 
@@ -120,14 +120,14 @@ func (c *LRUCache) CleanExpired() {
 
 	now := time.Now()
 	var toRemove []*list.Element
-	
+
 	for elem := c.evictList.Back(); elem != nil; elem = elem.Prev() {
 		item := elem.Value.(*Item)
 		if now.After(item.Expiration) {
 			toRemove = append(toRemove, elem)
 		}
 	}
-	
+
 	for _, elem := range toRemove {
 		c.removeElement(elem)
 	}

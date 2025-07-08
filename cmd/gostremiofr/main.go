@@ -8,9 +8,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	"github.com/amaumene/gostremiofr/internal/constants"
 	"github.com/amaumene/gostremiofr/pkg/ssl"
+	"github.com/gin-gonic/gin"
 )
 
 // GzipResponseWriter wraps gin.ResponseWriter to provide gzip compression
@@ -81,11 +81,11 @@ func main() {
 		c.Header("Access-Control-Allow-Origin", "*")
 		c.Next()
 	})
-	
+
 	// Create a context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	
+
 	// Start cache cleanup routine with proper context
 	tmdbMemoryCache.StartCleanup(ctx)
 
@@ -100,7 +100,7 @@ func main() {
 
 	// Check if SSL is enabled
 	useSSL := strings.ToLower(os.Getenv("USE_SSL")) == "true"
-	
+
 	if useSSL {
 		// Setup SSL certificate from local-ip.sh
 		sslManager := ssl.NewLocalIPCertificate(Logger)
@@ -112,15 +112,15 @@ func main() {
 			// Get certificate paths
 			certPath, keyPath := sslManager.GetCertificatePaths()
 			hostname := sslManager.GetHostname()
-			
+
 			Logger.Infof("[App] starting HTTPS server on port %s", port)
 			Logger.Infof("[App] accessible at https://%s:%s", hostname, port)
-			
+
 			// Start HTTPS server
 			log.Fatal(http.ListenAndServeTLS(":"+port, certPath, keyPath, r))
 		}
 	}
-	
+
 	if !useSSL {
 		// Start HTTP server
 		Logger.Infof("[App] starting HTTP server on port %s", port)

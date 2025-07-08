@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
 	"github.com/amaumene/gostremiofr/internal/constants"
 	"github.com/amaumene/gostremiofr/internal/models"
+	"github.com/gin-gonic/gin"
 )
 
 func (h *Handler) handleManifest(c *gin.Context) {
@@ -23,18 +23,18 @@ func (h *Handler) handleManifest(c *gin.Context) {
 			Configurable: true,
 		},
 	}
-	
+
 	c.JSON(http.StatusOK, manifest)
 }
 
 func (h *Handler) handleManifestWithConfig(c *gin.Context) {
 	configuration := c.Param("configuration")
-	
+
 	var config map[string]string
 	if data, err := base64.StdEncoding.DecodeString(configuration); err == nil {
 		json.Unmarshal(data, &config)
 	}
-	
+
 	manifest := models.Manifest{
 		ID:          constants.AddonID,
 		Version:     constants.AddonVersion,
@@ -47,7 +47,7 @@ func (h *Handler) handleManifestWithConfig(c *gin.Context) {
 			Configurable: true,
 		},
 	}
-	
+
 	c.JSON(http.StatusOK, manifest)
 }
 
@@ -60,7 +60,7 @@ func (h *Handler) getDefaultCatalogs() []models.Catalog {
 			Name: "Films populaires",
 			Extra: []models.ExtraField{
 				{
-					Name: "genre",
+					Name:    "genre",
 					Options: constants.TMDBMovieGenres,
 				},
 				{Name: "skip"},
@@ -90,7 +90,7 @@ func (h *Handler) getDefaultCatalogs() []models.Catalog {
 			Name: "Séries populaires",
 			Extra: []models.ExtraField{
 				{
-					Name: "genre",
+					Name:    "genre",
 					Options: constants.TMDBTVGenres,
 				},
 				{Name: "skip"},

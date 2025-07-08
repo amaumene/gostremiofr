@@ -93,8 +93,8 @@ func (b *BaseTorrentService) GetCachedSearch(provider, query, category string, s
 	cacheKey := fmt.Sprintf("torrent_search_%s_%s_%s_%d_%d", provider, query, category, season, episode)
 	if cached, found := b.cache.Get(cacheKey); found {
 		if result, ok := cached.(*models.TorrentResults); ok {
-			b.logger.Infof("[%s] cache hit for query: %s (%d movies, %d series, %d seasons, %d episodes)", 
-				provider, query, len(result.MovieTorrents), len(result.CompleteSeriesTorrents), 
+			b.logger.Infof("[%s] cache hit for query: %s (%d movies, %d series, %d seasons, %d episodes)",
+				provider, query, len(result.MovieTorrents), len(result.CompleteSeriesTorrents),
 				len(result.CompleteSeasonTorrents), len(result.EpisodeTorrents))
 			return result, true
 		}
@@ -106,8 +106,8 @@ func (b *BaseTorrentService) GetCachedSearch(provider, query, category string, s
 func (b *BaseTorrentService) CacheSearch(provider, query, category string, season, episode int, result *models.TorrentResults) {
 	cacheKey := fmt.Sprintf("torrent_search_%s_%s_%s_%d_%d", provider, query, category, season, episode)
 	b.cache.Set(cacheKey, result)
-	b.logger.Infof("[%s] cached result for query: %s (%d movies, %d series, %d seasons, %d episodes)", 
-		provider, query, len(result.MovieTorrents), len(result.CompleteSeriesTorrents), 
+	b.logger.Infof("[%s] cached result for query: %s (%d movies, %d series, %d seasons, %d episodes)",
+		provider, query, len(result.MovieTorrents), len(result.CompleteSeriesTorrents),
 		len(result.CompleteSeasonTorrents), len(result.EpisodeTorrents))
 }
 
@@ -160,10 +160,10 @@ func (b *BaseTorrentService) BuildSearchQueryWithMode(query string, mediaType st
 	} else {
 		title = query
 	}
-	
+
 	// Replace spaces with +
 	title = strings.ReplaceAll(title, " ", "+")
-	
+
 	// Build query based on type
 	if mediaType == "movie" {
 		// For movies: title+year (no prefix)
@@ -186,7 +186,7 @@ func (b *BaseTorrentService) BuildSearchQueryWithMode(query string, mediaType st
 		// Just series name if no season specified
 		return title
 	}
-	
+
 	return title
 }
 
@@ -247,7 +247,6 @@ func (b *BaseTorrentService) GetTorrentPriority(title string) models.Priority {
 		}
 	}
 
-
 	logger.Debugf("[TorrentService] torrent priority details - title: '%s', resolution: %d, language: %d",
 		title, priority.Resolution, priority.Language)
 	return priority
@@ -280,7 +279,7 @@ func (b *BaseTorrentService) MatchesLanguageFilter(title string, language string
 				}
 			}
 		}
-		
+
 		if !langAllowed {
 			logger.Debugf("[TorrentService] language filter applied - title: %s, provided language: %s", title, language)
 		}
@@ -337,11 +336,11 @@ func (b *BaseTorrentService) MatchesYear(title string, expectedYear int) bool {
 	if expectedYear == 0 {
 		return true // If no year provided, don't filter
 	}
-	
+
 	// Look for 4-digit year patterns in the title
 	yearPattern := regexp.MustCompile(`\b(19|20)\d{2}\b`)
 	matches := yearPattern.FindAllString(title, -1)
-	
+
 	for _, match := range matches {
 		if year, err := strconv.Atoi(match); err == nil {
 			// Allow some flexibility: exact year or within 1 year
@@ -350,7 +349,7 @@ func (b *BaseTorrentService) MatchesYear(title string, expectedYear int) bool {
 			}
 		}
 	}
-	
+
 	// If no year found in title, allow it (some torrents don't include year)
 	return len(matches) == 0
 }
@@ -392,20 +391,20 @@ func (b *BaseTorrentService) MatchesSeason(title string, season int) bool {
 	logger.Debugf("[TorrentService] checking if '%s' matches season %d", title, season)
 
 	patterns := []string{
-		fmt.Sprintf(`(?i)s%02d(?:[^e]|$)`, season),                    // S04 but not S04E01
-		fmt.Sprintf(`(?i)s%d(?:[^e]|$)`, season),                     // S4 but not S4E1
-		fmt.Sprintf(`(?i)season\s*%d(?:[^e]|\s*[^e]|$)`, season),     // Season 4
-		fmt.Sprintf(`(?i)saison\s*%d`, season),                       // Saison 4 (French)
-		fmt.Sprintf(`(?i)complete.*s%02d`, season),                   // Complete S04
-		fmt.Sprintf(`(?i)complete.*season\s*%d`, season),             // Complete Season 4
-		fmt.Sprintf(`(?i)s%02d.*complete`, season),                   // S04 Complete
-		fmt.Sprintf(`(?i)season\s*%d.*complete`, season),             // Season 4 Complete
-		fmt.Sprintf(`(?i)s%02d.*pack`, season),                       // S04 Pack
-		fmt.Sprintf(`(?i)season\s*%d.*pack`, season),                 // Season 4 Pack
-		fmt.Sprintf(`(?i)pack.*s%02d`, season),                       // Pack S04
-		fmt.Sprintf(`(?i)pack.*season\s*%d`, season),                 // Pack Season 4
-		fmt.Sprintf(`(?i)integrale.*s%02d`, season),                  // Integrale S04 (French)
-		fmt.Sprintf(`(?i)integrale.*saison\s*%d`, season),            // Integrale Saison 4 (French)
+		fmt.Sprintf(`(?i)s%02d(?:[^e]|$)`, season),               // S04 but not S04E01
+		fmt.Sprintf(`(?i)s%d(?:[^e]|$)`, season),                 // S4 but not S4E1
+		fmt.Sprintf(`(?i)season\s*%d(?:[^e]|\s*[^e]|$)`, season), // Season 4
+		fmt.Sprintf(`(?i)saison\s*%d`, season),                   // Saison 4 (French)
+		fmt.Sprintf(`(?i)complete.*s%02d`, season),               // Complete S04
+		fmt.Sprintf(`(?i)complete.*season\s*%d`, season),         // Complete Season 4
+		fmt.Sprintf(`(?i)s%02d.*complete`, season),               // S04 Complete
+		fmt.Sprintf(`(?i)season\s*%d.*complete`, season),         // Season 4 Complete
+		fmt.Sprintf(`(?i)s%02d.*pack`, season),                   // S04 Pack
+		fmt.Sprintf(`(?i)season\s*%d.*pack`, season),             // Season 4 Pack
+		fmt.Sprintf(`(?i)pack.*s%02d`, season),                   // Pack S04
+		fmt.Sprintf(`(?i)pack.*season\s*%d`, season),             // Pack Season 4
+		fmt.Sprintf(`(?i)integrale.*s%02d`, season),              // Integrale S04 (French)
+		fmt.Sprintf(`(?i)integrale.*saison\s*%d`, season),        // Integrale Saison 4 (French)
 	}
 
 	for _, pattern := range patterns {
@@ -446,7 +445,7 @@ func (b *BaseTorrentService) SortTorrents(torrents []models.TorrentInfo) {
 		if priorityI.Resolution != priorityJ.Resolution {
 			return priorityI.Resolution > priorityJ.Resolution
 		}
-		
+
 		// 2. Then by language priority (higher is better) - only for YGG
 		if torrents[i].Source == "YGG" && torrents[j].Source == "YGG" {
 			if priorityI.Language != priorityJ.Language {
@@ -489,14 +488,13 @@ func (ts *TorrentSorter) SortResults(results *models.TorrentResults) {
 			t := results.MovieTorrents[i]
 			parsed := ts.ParseFileName(t.Title)
 			priority := ts.GetTorrentPriority(t.Title)
-			logger.Infof("  %d. %s - Resolution: %s (priority:%d), Size: %.2f GB, Source: %s", 
+			logger.Infof("  %d. %s - Resolution: %s (priority:%d), Size: %.2f GB, Source: %s",
 				i+1, t.Title, parsed.Resolution, priority.Resolution, float64(t.Size)/(1024*1024*1024), t.Source)
 		}
 	}
 
 	logger.Debugf("[TorrentService] torrent sorting completed")
 }
-
 
 func ClassifyTorrent(title string, mediaType string, season, episode int, base *BaseTorrentService) string {
 	titleUpper := strings.ToUpper(title)
@@ -600,7 +598,7 @@ func (b *BaseTorrentService) ProcessTorrents(torrents []GenericTorrent, mediaTyp
 				}
 			} else {
 				// If no specific episode requested, accept any episode
-				classification = "episode" 
+				classification = "episode"
 				shouldAdd = true
 			}
 		}
@@ -664,7 +662,6 @@ func (y YggTorrentWrapper) GetSeason() int      { return 0 }  // YGG doesn't hav
 func (y YggTorrentWrapper) GetEpisode() int     { return 0 }  // YGG doesn't have explicit episode
 func (y YggTorrentWrapper) GetSize() int64      { return y.Size }
 
-
 // Helper functions to convert slices to GenericTorrent slices
 
 func WrapYggTorrents(torrents []models.YggTorrent) []GenericTorrent {
@@ -674,5 +671,3 @@ func WrapYggTorrents(torrents []models.YggTorrent) []GenericTorrent {
 	}
 	return generic
 }
-
-

@@ -10,12 +10,10 @@ import (
 
 // Config represents the configuration structure
 type Config struct {
-	TMDBAPIKey        string   `json:"TMDB_API_KEY"`
-	APIKeyAlldebrid   string   `json:"API_KEY_ALLDEBRID"`
-	LangToShow        []string `json:"LANG_TO_SHOW"`
-	SourcePriority    []string `json:"SOURCE_PRIORITY"`
-	ResolutionToShow  []string `json:"RESOLUTION_TO_SHOW"`
-	TimeToKeepTorrent int      `json:"TIME_TO_KEEP_TORRENT"`
+	TMDBAPIKey       string   `json:"TMDB_API_KEY"`
+	APIKeyAlldebrid  string   `json:"API_KEY_ALLDEBRID"`
+	LangToShow       []string `json:"LANG_TO_SHOW"`
+	ResolutionToShow []string `json:"RESOLUTION_TO_SHOW"`
 }
 
 func GetConfig(c *gin.Context) (*Config, error) {
@@ -49,7 +47,6 @@ func (c *Config) IsResolutionAllowed(resolution string) bool {
 	}
 	return false
 }
-
 
 // IsLanguageAllowed checks if a language is allowed
 func (c *Config) IsLanguageAllowed(language string) bool {

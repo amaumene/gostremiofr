@@ -13,12 +13,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/amaumene/gostremiofr/internal/config"
 	"github.com/amaumene/gostremiofr/internal/constants"
 	"github.com/amaumene/gostremiofr/internal/errors"
 	"github.com/amaumene/gostremiofr/internal/models"
 	"github.com/amaumene/gostremiofr/internal/services"
+	"github.com/gin-gonic/gin"
 )
 
 var (
@@ -44,21 +44,21 @@ type TorrentService interface {
 func (h *Handler) handleStream(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), constants.RequestTimeout)
 	defer cancel()
-	
+
 	h.monitorTimeout(ctx, c.Param("id"))
-	
+
 	userConfig := h.parseUserConfiguration(c.Param("configuration"))
 	apiKey := h.extractAPIKey(userConfig, "API_KEY_ALLDEBRID")
-	
+
 	if apiKey == "" {
 		err := errors.NewAPIKeyMissingError("AllDebrid")
 		h.services.Logger.Warnf("[StreamHandler] %v", err)
 		c.JSON(http.StatusOK, models.StreamResponse{Streams: []models.Stream{}})
 		return
 	}
-	
+
 	h.configureTMDBService(userConfig)
-	
+
 	imdbID, season, episode := parseStreamID(c.Param("id"))
 	if imdbID == "" {
 		err := errors.NewInvalidIDError(c.Param("id"))
@@ -66,10 +66,10 @@ func (h *Handler) handleStream(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	
+
 	userConfigStruct := config.CreateFromUserData(userConfig, h.config)
 	h.configureTorrentServices(userConfigStruct)
-	
+
 	mediaType, title, year, err := h.getMediaInfo(imdbID)
 	if err != nil {
 		tmdbErr := errors.NewTMDBError(fmt.Sprintf("failed to get info for %s", imdbID), err)
@@ -77,9 +77,9 @@ func (h *Handler) handleStream(c *gin.Context) {
 		c.JSON(http.StatusOK, models.StreamResponse{Streams: []models.Stream{}})
 		return
 	}
-	
+
 	h.services.Logger.Infof("[StreamHandler] processing %s request - %s (%s)", mediaType, title, imdbID)
-	
+
 	streams := h.searchStreams(mediaType, title, year, season, episode, apiKey, imdbID, userConfigStruct)
 	c.JSON(http.StatusOK, models.StreamResponse{Streams: streams})
 }
@@ -108,7 +108,7 @@ func (h *Handler) extractAPIKey(userConfig map[string]interface{}, keyName strin
 			return str
 		}
 	}
-	
+
 	switch keyName {
 	case "API_KEY_ALLDEBRID":
 		if h.config != nil {
@@ -119,7 +119,7 @@ func (h *Handler) extractAPIKey(userConfig map[string]interface{}, keyName strin
 			return h.config.TMDBAPIKey
 		}
 	}
-	
+
 	return ""
 }
 
@@ -162,16 +162,16 @@ func (h *Handler) searchMovieStreams(title string, year int, apiKey string, user
 		Year:      year,
 	}
 	results := h.performParallelSearch(params)
-	
+
 	h.services.Logger.Infof("[StreamHandler] search results - movies: %d, starting AllDebrid processing", len(results.MovieTorrents))
-	
+
 	return h.processResults(results, apiKey, userConfig, year, 0, 0)
 }
 
 // Two-phase search: season packs first, then specific episodes
 func (h *Handler) searchSeriesStreams(title string, season, episode int, apiKey, imdbID string, userConfig *config.Config) []models.Stream {
 	h.services.Logger.Infof("[StreamHandler] starting first search prioritizing complete seasons for s%02d", season)
-	
+
 	params := SearchParams{
 		Query:     title,
 		MediaType: "series",
@@ -181,21 +181,21 @@ func (h *Handler) searchSeriesStreams(title string, season, episode int, apiKey,
 	}
 	results := h.performParallelSearch(params)
 	streams := h.processResults(results, apiKey, userConfig, 0, season, episode)
-	
+
 	if len(streams) > 0 {
 		return streams
 	}
-	
+
 	if season > 0 && episode > 0 {
 		h.services.Logger.Infof("[StreamHandler] no working streams from season search, trying episode-specific search for s%02de%02d", season, episode)
-		
+
 		params.EpisodeOnly = true
 		episodeResults := h.performParallelSearch(params)
 		streams = h.processResults(episodeResults, apiKey, userConfig, 0, season, episode)
-		
+
 		if len(streams) == 0 {
 			h.services.Logger.Infof("[StreamHandler] episode-specific search also failed, trying broader title search")
-			
+
 			broadParams := SearchParams{
 				Query:     title,
 				MediaType: "series",
@@ -206,7 +206,7 @@ func (h *Handler) searchSeriesStreams(title string, season, episode int, apiKey,
 			}
 		}
 	}
-	
+
 	return streams
 }
 
@@ -214,12 +214,12 @@ func (h *Handler) performParallelSearch(params SearchParams) *models.CombinedTor
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	combinedResults := models.CombinedTorrentResults{}
-	
+
 	searchTimeout := constants.SearchTimeout
 	done := make(chan bool)
-	
+
 	wg.Add(constants.TorrentSearchGoroutines)
-	
+
 	// YGG search goroutine
 	go func() {
 		defer wg.Done()
@@ -228,10 +228,10 @@ func (h *Handler) performParallelSearch(params SearchParams) *models.CombinedTor
 				h.services.Logger.Errorf("[StreamHandler] YGG search panic recovered: %v", r)
 			}
 		}()
-		
+
 		var results *models.TorrentResults
 		var err error
-		
+
 		if params.EpisodeOnly {
 			h.services.Logger.Infof("[StreamHandler] YGG specific episode search - %s s%02de%02d", params.Query, params.Season, params.Episode)
 			results, err = h.services.YGG.SearchTorrentsSpecificEpisode(params.Query, params.MediaType, params.Season, params.Episode)
@@ -245,12 +245,12 @@ func (h *Handler) performParallelSearch(params SearchParams) *models.CombinedTor
 			h.services.Logger.Infof("[StreamHandler] YGG search - %s (%s)", params.Query, category)
 			results, err = h.services.YGG.SearchTorrents(params.Query, category, params.Season, params.Episode)
 		}
-		
+
 		if err != nil {
 			h.services.Logger.Errorf("[StreamHandler] YGG search failed: %v", err)
 			return
 		}
-		
+
 		if params.EpisodeOnly && results != nil {
 			// For episode-only searches, only add episode torrents
 			mu.Lock()
@@ -260,7 +260,7 @@ func (h *Handler) performParallelSearch(params SearchParams) *models.CombinedTor
 			aggregateResults(results, &combinedResults, &mu)
 		}
 	}()
-	
+
 	// Apibay search goroutine
 	go func() {
 		defer wg.Done()
@@ -269,15 +269,15 @@ func (h *Handler) performParallelSearch(params SearchParams) *models.CombinedTor
 				h.services.Logger.Errorf("[StreamHandler] Apibay search panic recovered: %v", r)
 			}
 		}()
-		
+
 		query := params.Query
 		if params.MediaType == "movie" && params.Year > 0 {
 			query = fmt.Sprintf("%s %d", params.Query, params.Year)
 		}
-		
+
 		var results *models.TorrentResults
 		var err error
-		
+
 		if params.EpisodeOnly {
 			h.services.Logger.Infof("[StreamHandler] Apibay specific episode search - %s s%02de%02d", query, params.Season, params.Episode)
 			results, err = h.services.Apibay.SearchTorrentsSpecificEpisode(query, params.MediaType, params.Season, params.Episode)
@@ -285,12 +285,12 @@ func (h *Handler) performParallelSearch(params SearchParams) *models.CombinedTor
 			h.services.Logger.Infof("[StreamHandler] Apibay search - %s (%s)", query, params.MediaType)
 			results, err = h.services.Apibay.SearchTorrents(query, params.MediaType, params.Season, params.Episode)
 		}
-		
+
 		if err != nil {
 			h.services.Logger.Errorf("[StreamHandler] Apibay search failed: %v", err)
 			return
 		}
-		
+
 		if params.EpisodeOnly && results != nil {
 			// For episode-only searches, only add episode torrents
 			mu.Lock()
@@ -300,31 +300,31 @@ func (h *Handler) performParallelSearch(params SearchParams) *models.CombinedTor
 			aggregateResults(results, &combinedResults, &mu)
 		}
 	}()
-	
+
 	// Wait for searches with timeout
 	go func() {
 		wg.Wait()
 		close(done)
 	}()
-	
+
 	select {
 	case <-done:
 		h.services.Logger.Debugf("[StreamHandler] all searches completed successfully")
 	case <-time.After(searchTimeout):
 		h.services.Logger.Errorf("[StreamHandler] search timeout after %v for query: %s", searchTimeout, params.Query)
 	}
-	
-	h.services.Logger.Infof("[StreamHandler] search completed - movies: %d, series: %d, seasons: %d, episodes: %d", 
-		len(combinedResults.MovieTorrents), len(combinedResults.CompleteSeriesTorrents), 
+
+	h.services.Logger.Infof("[StreamHandler] search completed - movies: %d, series: %d, seasons: %d, episodes: %d",
+		len(combinedResults.MovieTorrents), len(combinedResults.CompleteSeriesTorrents),
 		len(combinedResults.CompleteSeasonTorrents), len(combinedResults.EpisodeTorrents))
-	
+
 	// Log sample episode torrents for debugging
 	for i, torrent := range combinedResults.EpisodeTorrents {
 		if i < constants.MaxEpisodeTorrentsToLog {
 			h.services.Logger.Infof("[StreamHandler] episode torrent %d: %s (%s)", i+1, torrent.Title, torrent.Source)
 		}
 	}
-	
+
 	return &combinedResults
 }
 
@@ -339,17 +339,15 @@ func (h *Handler) searchTorrents(query string, mediaType string, season, episode
 	return h.processResults(results, apiKey, nil, 0, season, episode)
 }
 
-
-
 // searchTorrentsOnly searches for torrents without processing through AllDebrid
 func (h *Handler) searchTorrentsOnly(query, mediaType string, season, episode int, imdbID string, year int) *models.CombinedTorrentResults {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	combinedResults := models.CombinedTorrentResults{}
-	
+
 	searchTimeout := constants.SearchTimeout
 	done := make(chan bool)
-	
+
 	// Add YGG search
 	wg.Add(constants.TorrentSearchGoroutines)
 	go func() {
@@ -359,19 +357,19 @@ func (h *Handler) searchTorrentsOnly(query, mediaType string, season, episode in
 				h.services.Logger.Errorf("[StreamHandler] YGG search panic recovered: %v", r)
 			}
 		}()
-		
+
 		category := "movie"
 		if mediaType == "series" {
 			category = "series"
 		}
-		
+
 		h.services.Logger.Infof("[StreamHandler] YGG search started - query: %s, category: %s, season: %d, episode: %d", query, category, season, episode)
 		results, err := h.services.YGG.SearchTorrents(query, category, season, episode)
 		if err != nil {
 			h.services.Logger.Errorf("[StreamHandler] failed to search YGG: %v", err)
 			return
 		}
-		
+
 		if results != nil {
 			mu.Lock()
 			for _, t := range results.MovieTorrents {
@@ -389,7 +387,7 @@ func (h *Handler) searchTorrentsOnly(query, mediaType string, season, episode in
 			mu.Unlock()
 		}
 	}()
-	
+
 	// Add Apibay search
 	go func() {
 		defer wg.Done()
@@ -398,27 +396,27 @@ func (h *Handler) searchTorrentsOnly(query, mediaType string, season, episode in
 				h.services.Logger.Errorf("[StreamHandler] Apibay search panic recovered: %v", r)
 			}
 		}()
-		
+
 		// Build query with year for movies
 		apibayQuery := query
 		if mediaType == "movie" && year > 0 {
 			apibayQuery = fmt.Sprintf("%s %d", query, year)
 		}
-		
+
 		h.services.Logger.Infof("[StreamHandler] Apibay search started - query: %s, mediaType: %s, season: %d, episode: %d", apibayQuery, mediaType, season, episode)
 		results, err := h.services.Apibay.SearchTorrents(apibayQuery, mediaType, season, episode)
 		if err != nil {
 			h.services.Logger.Errorf("[StreamHandler] failed to search Apibay: %v", err)
 			return
 		}
-		
+
 		if results != nil {
-			h.services.Logger.Infof("[StreamHandler] Apibay results - movies: %d, complete series: %d, seasons: %d, episodes: %d", 
-				len(results.MovieTorrents), 
-				len(results.CompleteSeriesTorrents), 
-				len(results.CompleteSeasonTorrents), 
+			h.services.Logger.Infof("[StreamHandler] Apibay results - movies: %d, complete series: %d, seasons: %d, episodes: %d",
+				len(results.MovieTorrents),
+				len(results.CompleteSeriesTorrents),
+				len(results.CompleteSeasonTorrents),
 				len(results.EpisodeTorrents))
-			
+
 			mu.Lock()
 			for _, t := range results.MovieTorrents {
 				combinedResults.MovieTorrents = append(combinedResults.MovieTorrents, t)
@@ -437,27 +435,26 @@ func (h *Handler) searchTorrentsOnly(query, mediaType string, season, episode in
 			h.services.Logger.Debugf("[StreamHandler] Apibay returned no results")
 		}
 	}()
-	
-	
+
 	// Wait for searches with timeout
 	go func() {
 		wg.Wait()
 		close(done)
 	}()
-	
+
 	select {
 	case <-done:
 		h.services.Logger.Debugf("[StreamHandler] all searches completed successfully")
 	case <-time.After(searchTimeout):
 		h.services.Logger.Errorf("[StreamHandler] search timeout after %v for query: %s", searchTimeout, query)
 	}
-	
-	h.services.Logger.Infof("[StreamHandler] search completed - movies: %d, complete series: %d, seasons: %d, episodes: %d", 
-		len(combinedResults.MovieTorrents), 
-		len(combinedResults.CompleteSeriesTorrents), 
-		len(combinedResults.CompleteSeasonTorrents), 
+
+	h.services.Logger.Infof("[StreamHandler] search completed - movies: %d, complete series: %d, seasons: %d, episodes: %d",
+		len(combinedResults.MovieTorrents),
+		len(combinedResults.CompleteSeriesTorrents),
+		len(combinedResults.CompleteSeasonTorrents),
 		len(combinedResults.EpisodeTorrents))
-	
+
 	return &combinedResults
 }
 
@@ -466,10 +463,10 @@ func (h *Handler) searchTorrentsOnlySpecificEpisode(query, mediaType string, sea
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	combinedResults := models.CombinedTorrentResults{}
-	
+
 	searchTimeout := constants.SearchTimeout
 	done := make(chan bool)
-	
+
 	// Add YGG search with specific episode query
 	wg.Add(constants.TorrentSearchGoroutines)
 	go func() {
@@ -479,16 +476,16 @@ func (h *Handler) searchTorrentsOnlySpecificEpisode(query, mediaType string, sea
 				h.services.Logger.Errorf("[StreamHandler] YGG specific episode search panic recovered: %v", r)
 			}
 		}()
-		
+
 		h.services.Logger.Infof("[StreamHandler] YGG specific episode search started - query: %s, s%02de%02d", query, season, episode)
-		
+
 		// Use YGG's SearchTorrentsSpecificEpisode if available, otherwise use regular search
 		results, err := h.services.YGG.SearchTorrentsSpecificEpisode(query, mediaType, season, episode)
 		if err != nil {
 			h.services.Logger.Errorf("[StreamHandler] failed to search YGG for specific episode: %v", err)
 			return
 		}
-		
+
 		if results != nil {
 			mu.Lock()
 			// Only add episode torrents from this search
@@ -498,7 +495,7 @@ func (h *Handler) searchTorrentsOnlySpecificEpisode(query, mediaType string, sea
 			mu.Unlock()
 		}
 	}()
-	
+
 	// Add Apibay search with specific episode query
 	go func() {
 		defer wg.Done()
@@ -507,7 +504,7 @@ func (h *Handler) searchTorrentsOnlySpecificEpisode(query, mediaType string, sea
 				h.services.Logger.Errorf("[StreamHandler] Apibay specific episode search panic recovered: %v", r)
 			}
 		}()
-		
+
 		// Use Apibay's specific episode search method
 		h.services.Logger.Infof("[StreamHandler] Apibay specific episode search started - query: %s, s%02de%02d", query, season, episode)
 		results, err := h.services.Apibay.SearchTorrentsSpecificEpisode(query, mediaType, season, episode)
@@ -515,7 +512,7 @@ func (h *Handler) searchTorrentsOnlySpecificEpisode(query, mediaType string, sea
 			h.services.Logger.Errorf("[StreamHandler] failed to search Apibay for specific episode: %v", err)
 			return
 		}
-		
+
 		if results != nil {
 			mu.Lock()
 			// Only add episode torrents from this search
@@ -525,30 +522,29 @@ func (h *Handler) searchTorrentsOnlySpecificEpisode(query, mediaType string, sea
 			mu.Unlock()
 		}
 	}()
-	
-	
+
 	// Wait for searches with timeout
 	go func() {
 		wg.Wait()
 		close(done)
 	}()
-	
+
 	select {
 	case <-done:
 		h.services.Logger.Debugf("[StreamHandler] all specific episode searches completed successfully")
 	case <-time.After(searchTimeout):
 		h.services.Logger.Errorf("[StreamHandler] specific episode search timeout after %v", searchTimeout)
 	}
-	
+
 	h.services.Logger.Infof("[StreamHandler] specific episode search completed - episodes found: %d", len(combinedResults.EpisodeTorrents))
-	
+
 	return &combinedResults
 }
 
 func (h *Handler) processResults(results *models.CombinedTorrentResults, apiKey string, userConfig *config.Config, year int, targetSeason, targetEpisode int) []models.Stream {
-	h.services.Logger.Infof("[StreamHandler] processResults started - movies: %d, episodes: %d, seasons: %d, complete series: %d", 
+	h.services.Logger.Infof("[StreamHandler] processResults started - movies: %d, episodes: %d, seasons: %d, complete series: %d",
 		len(results.MovieTorrents), len(results.EpisodeTorrents), len(results.CompleteSeasonTorrents), len(results.CompleteSeriesTorrents))
-	
+
 	if year > 0 && len(results.MovieTorrents) > 0 {
 		var filteredMovies []models.TorrentInfo
 		for _, torrent := range results.MovieTorrents {
@@ -561,9 +557,9 @@ func (h *Handler) processResults(results *models.CombinedTorrentResults, apiKey 
 		h.services.Logger.Infof("[StreamHandler] year filtering: %d -> %d movie torrents", len(results.MovieTorrents), len(filteredMovies))
 		results.MovieTorrents = filteredMovies
 	}
-	
+
 	var allTorrents []models.TorrentInfo
-	
+
 	if targetSeason > 0 && targetEpisode > 0 {
 		allTorrents = append(allTorrents, results.CompleteSeasonTorrents...)
 		allTorrents = append(allTorrents, results.EpisodeTorrents...)
@@ -578,9 +574,9 @@ func (h *Handler) processResults(results *models.CombinedTorrentResults, apiKey 
 		allTorrents = append(allTorrents, results.CompleteSeasonTorrents...)
 		allTorrents = append(allTorrents, results.CompleteSeriesTorrents...)
 	}
-	
+
 	h.services.Logger.Infof("[StreamHandler] processing %d torrents in priority order", len(allTorrents))
-	
+
 	return h.processSequentialTorrents(allTorrents, apiKey, userConfig, targetSeason, targetEpisode)
 }
 
@@ -590,12 +586,12 @@ func (h *Handler) processSequentialTorrents(torrents []models.TorrentInfo, apiKe
 		h.services.Logger.Infof("[StreamHandler] no torrents to process")
 		return []models.Stream{}
 	}
-	
+
 	h.services.Logger.Infof("[StreamHandler] processing %d torrents sequentially", len(torrents))
-	
+
 	for i, torrent := range torrents {
 		h.services.Logger.Infof("[StreamHandler] trying torrent %d/%d: %s (source: %s)", i+1, len(torrents), torrent.Title, torrent.Source)
-		
+
 		hash := torrent.Hash
 		if hash == "" && torrent.Source == "YGG" {
 			h.services.Logger.Infof("[StreamHandler] fetching hash for YGG torrent: %s", torrent.Title)
@@ -610,25 +606,25 @@ func (h *Handler) processSequentialTorrents(torrents []models.TorrentInfo, apiKe
 			}
 			hash = fetchedHash
 		}
-		
+
 		if hash == "" {
 			h.services.Logger.Warnf("[StreamHandler] skipping torrent without hash: %s", torrent.Title)
 			continue
 		}
-		
+
 		h.services.Logger.Infof("[StreamHandler] uploading magnet: %s", torrent.Title)
 		err := h.services.AllDebrid.UploadMagnet(hash, torrent.Title, apiKey)
 		if err != nil {
 			h.services.Logger.Errorf("[StreamHandler] failed to upload magnet %s: %v", torrent.Title, err)
 			continue
 		}
-		
+
 		var isReady bool
 		var readyMagnet *models.ProcessedMagnet
-		
+
 		for attempt := 1; attempt <= constants.MaxMagnetCheckAttempts; attempt++ {
 			h.services.Logger.Infof("[StreamHandler] checking magnet status - attempt %d/2", attempt)
-			
+
 			magnetInfo := models.MagnetInfo{Hash: hash, Title: torrent.Title, Source: torrent.Source}
 			processedMagnets, err := h.services.AllDebrid.CheckMagnets([]models.MagnetInfo{magnetInfo}, apiKey)
 			if err != nil {
@@ -639,53 +635,53 @@ func (h *Handler) processSequentialTorrents(torrents []models.TorrentInfo, apiKe
 				}
 				break
 			}
-			
+
 			if len(processedMagnets) > 0 && processedMagnets[0].Ready && len(processedMagnets[0].Links) > 0 {
 				h.services.Logger.Infof("[StreamHandler] magnet is ready with %d links!", len(processedMagnets[0].Links))
 				isReady = true
 				readyMagnet = &processedMagnets[0]
 				break
 			}
-			
+
 			if attempt < constants.MaxMagnetCheckAttempts {
 				h.services.Logger.Infof("[StreamHandler] magnet not ready yet, waiting before retry")
 				time.Sleep(constants.MagnetReadyRetryDelay)
 			}
 		}
-		
+
 		if !isReady || readyMagnet == nil {
 			h.services.Logger.Infof("[StreamHandler] magnet not ready after %d attempts, trying next", constants.MaxMagnetCheckAttempts)
 			continue
 		}
-		
+
 		stream := h.processSingleReadyMagnet(readyMagnet, torrent, targetSeason, targetEpisode, apiKey)
 		if stream != nil {
 			h.services.Logger.Infof("[StreamHandler] successfully created stream from torrent: %s", torrent.Title)
 			return []models.Stream{*stream}
 		}
-		
+
 		h.services.Logger.Warnf("[StreamHandler] failed to create stream from ready magnet: %s", torrent.Title)
 	}
-	
+
 	h.services.Logger.Infof("[StreamHandler] no working torrents found")
 	return []models.Stream{}
 }
 
 func (h *Handler) processSingleReadyMagnet(magnet *models.ProcessedMagnet, torrent models.TorrentInfo, targetSeason, targetEpisode int, apiKey string) *models.Stream {
 	isSeasonPack := h.isSeasonPack(torrent.Title)
-	
+
 	if targetSeason > 0 && targetEpisode > 0 {
 		if isSeasonPack {
 			h.services.Logger.Infof("[StreamHandler] processing season pack for specific episode s%02de%02d", targetSeason, targetEpisode)
 		} else {
 			h.services.Logger.Infof("[StreamHandler] processing episode torrent for s%02de%02d", targetSeason, targetEpisode)
 		}
-		
+
 		if file, found := h.findEpisodeFile(magnet.Links, targetSeason, targetEpisode); found {
 			h.services.Logger.Infof("[StreamHandler] found target episode file")
 			return h.createStreamFromFile(file, torrent, apiKey)
 		}
-		
+
 		if isSeasonPack {
 			h.services.Logger.Warnf("[StreamHandler] target episode s%02de%02d not found in season pack, using largest file", targetSeason, targetEpisode)
 		} else {
@@ -693,7 +689,7 @@ func (h *Handler) processSingleReadyMagnet(magnet *models.ProcessedMagnet, torre
 			return nil
 		}
 	}
-	
+
 	if targetSeason > 0 && targetEpisode == 0 && isSeasonPack {
 		h.services.Logger.Infof("[StreamHandler] processing complete season pack for season %d", targetSeason)
 	} else if targetSeason == 0 && targetEpisode == 0 {
@@ -701,43 +697,43 @@ func (h *Handler) processSingleReadyMagnet(magnet *models.ProcessedMagnet, torre
 	} else {
 		h.services.Logger.Infof("[StreamHandler] using largest file as fallback")
 	}
-	
+
 	if file, found := findLargestFile(magnet.Links); found {
 		return h.createStreamFromFile(file, torrent, apiKey)
 	}
-	
+
 	h.services.Logger.Warnf("[StreamHandler] no valid files found in magnet")
 	return nil
 }
 
 func (h *Handler) isSeasonPack(title string) bool {
 	titleLower := strings.ToLower(title)
-	return strings.Contains(titleLower, "complete") || 
-		   strings.Contains(titleLower, "season") ||
-		   strings.Contains(titleLower, "saison")
+	return strings.Contains(titleLower, "complete") ||
+		strings.Contains(titleLower, "season") ||
+		strings.Contains(titleLower, "saison")
 }
 
 func parseFileInfo(linkObj map[string]interface{}) string {
 	info := ""
-	
+
 	if size, ok := linkObj["size"].(float64); ok {
 		sizeGB := size / constants.BytesToGB
 		info += fmt.Sprintf("💾 %.2f GB", sizeGB)
 	}
-	
+
 	if filename, ok := linkObj["filename"].(string); ok {
 		if info != "" {
 			info += " • "
 		}
 		info += fmt.Sprintf("📄 %s", filename)
 	}
-	
+
 	return info
 }
 
 func parseStreamID(id string) (string, int, int) {
 	id = strings.TrimSuffix(id, ".json")
-	
+
 	if episodeRegex.MatchString(id) {
 		matches := episodeRegex.FindStringSubmatch(id)
 		if len(matches) == 3 {
@@ -747,11 +743,11 @@ func parseStreamID(id string) (string, int, int) {
 			return imdbID, season, episode
 		}
 	}
-	
+
 	if imdbIDRegex.MatchString(id) {
 		return id, 0, 0
 	}
-	
+
 	return "", 0, 0
 }
 
@@ -759,7 +755,7 @@ func (h *Handler) matchesYear(title string, year int) bool {
 	if year == 0 {
 		return true
 	}
-	
+
 	yearStr := fmt.Sprintf("%d", year)
 	return strings.Contains(title, yearStr)
 }
@@ -771,7 +767,7 @@ func (h *Handler) parseEpisodeFromFilename(filename string) (int, int) {
 		`(\d{1,2})x(\d{1,2})`,
 		`[sS]eason\s*(\d{1,2})\s*[eE]pisode\s*(\d{1,2})`,
 	}
-	
+
 	for _, pattern := range patterns {
 		re := regexp.MustCompile(pattern)
 		if matches := re.FindStringSubmatch(filename); len(matches) >= 3 {
@@ -782,7 +778,7 @@ func (h *Handler) parseEpisodeFromFilename(filename string) (int, int) {
 			}
 		}
 	}
-	
+
 	return 0, 0
 }
 
@@ -790,10 +786,10 @@ func aggregateResults(results *models.TorrentResults, combined *models.CombinedT
 	if results == nil {
 		return
 	}
-	
+
 	mu.Lock()
 	defer mu.Unlock()
-	
+
 	combined.MovieTorrents = append(combined.MovieTorrents, results.MovieTorrents...)
 	combined.CompleteSeriesTorrents = append(combined.CompleteSeriesTorrents, results.CompleteSeriesTorrents...)
 	combined.CompleteSeasonTorrents = append(combined.CompleteSeasonTorrents, results.CompleteSeasonTorrents...)
@@ -803,7 +799,7 @@ func aggregateResults(results *models.TorrentResults, combined *models.CombinedT
 func findLargestFile(links []interface{}) (map[string]interface{}, bool) {
 	var largestFile map[string]interface{}
 	var largestSize float64
-	
+
 	for _, link := range links {
 		if linkObj, ok := link.(map[string]interface{}); ok {
 			if size, ok := linkObj["size"].(float64); ok {
@@ -814,7 +810,7 @@ func findLargestFile(links []interface{}) (map[string]interface{}, bool) {
 			}
 		}
 	}
-	
+
 	return largestFile, largestFile != nil
 }
 
@@ -837,13 +833,13 @@ func (h *Handler) createStreamFromFile(file map[string]interface{}, torrent mode
 	if !ok {
 		return nil
 	}
-	
+
 	directURL, err := h.services.AllDebrid.UnlockLink(linkStr, apiKey)
 	if err != nil {
 		h.services.Logger.Errorf("[StreamHandler] failed to unlock link: %v", err)
 		return nil
 	}
-	
+
 	streamTitle := fmt.Sprintf("%s\n%s", torrent.Title, parseFileInfo(file))
 	return &models.Stream{
 		Name:  torrent.Source,

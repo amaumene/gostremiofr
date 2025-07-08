@@ -13,31 +13,31 @@ type TMDBFindResponse struct {
 }
 
 type TMDBMovie struct {
-	ID            int      `json:"id"`
-	Title         string   `json:"title"`
-	OriginalTitle string   `json:"original_title"`
-	Overview      string   `json:"overview"`
-	PosterPath    string   `json:"poster_path"`
-	BackdropPath  string   `json:"backdrop_path"`
-	ReleaseDate   string   `json:"release_date"`
-	VoteAverage   float64  `json:"vote_average"`
-	VoteCount     int      `json:"vote_count"`
-	GenreIDs      []int    `json:"genre_ids"`
-	Popularity    float64  `json:"popularity"`
+	ID            int     `json:"id"`
+	Title         string  `json:"title"`
+	OriginalTitle string  `json:"original_title"`
+	Overview      string  `json:"overview"`
+	PosterPath    string  `json:"poster_path"`
+	BackdropPath  string  `json:"backdrop_path"`
+	ReleaseDate   string  `json:"release_date"`
+	VoteAverage   float64 `json:"vote_average"`
+	VoteCount     int     `json:"vote_count"`
+	GenreIDs      []int   `json:"genre_ids"`
+	Popularity    float64 `json:"popularity"`
 }
 
 type TMDBTV struct {
-	ID            int      `json:"id"`
-	Name          string   `json:"name"`
-	OriginalName  string   `json:"original_name"`
-	Overview      string   `json:"overview"`
-	PosterPath    string   `json:"poster_path"`
-	BackdropPath  string   `json:"backdrop_path"`
-	FirstAirDate  string   `json:"first_air_date"`
-	VoteAverage   float64  `json:"vote_average"`
-	VoteCount     int      `json:"vote_count"`
-	GenreIDs      []int    `json:"genre_ids"`
-	Popularity    float64  `json:"popularity"`
+	ID           int     `json:"id"`
+	Name         string  `json:"name"`
+	OriginalName string  `json:"original_name"`
+	Overview     string  `json:"overview"`
+	PosterPath   string  `json:"poster_path"`
+	BackdropPath string  `json:"backdrop_path"`
+	FirstAirDate string  `json:"first_air_date"`
+	VoteAverage  float64 `json:"vote_average"`
+	VoteCount    int     `json:"vote_count"`
+	GenreIDs     []int   `json:"genre_ids"`
+	Popularity   float64 `json:"popularity"`
 }
 
 type TMDBMovieResponse struct {
@@ -64,18 +64,18 @@ type TMDBGenreResponse struct {
 }
 
 type TMDBMovieDetails struct {
-	ID               int           `json:"id"`
-	IMDBId           string        `json:"imdb_id"`
-	Title            string        `json:"title"`
-	OriginalTitle    string        `json:"original_title"`
-	Overview         string        `json:"overview"`
-	PosterPath       string        `json:"poster_path"`
-	BackdropPath     string        `json:"backdrop_path"`
-	ReleaseDate      string        `json:"release_date"`
-	Runtime          int           `json:"runtime"`
-	VoteAverage      float64       `json:"vote_average"`
-	VoteCount        int           `json:"vote_count"`
-	Genres           []TMDBGenre   `json:"genres"`
+	ID                  int         `json:"id"`
+	IMDBId              string      `json:"imdb_id"`
+	Title               string      `json:"title"`
+	OriginalTitle       string      `json:"original_title"`
+	Overview            string      `json:"overview"`
+	PosterPath          string      `json:"poster_path"`
+	BackdropPath        string      `json:"backdrop_path"`
+	ReleaseDate         string      `json:"release_date"`
+	Runtime             int         `json:"runtime"`
+	VoteAverage         float64     `json:"vote_average"`
+	VoteCount           int         `json:"vote_count"`
+	Genres              []TMDBGenre `json:"genres"`
 	ProductionCountries []struct {
 		ISO  string `json:"iso_3166_1"`
 		Name string `json:"name"`
@@ -99,23 +99,23 @@ type TMDBMovieDetails struct {
 }
 
 type TMDBTVDetails struct {
-	ID               int           `json:"id"`
-	Name             string        `json:"name"`
-	OriginalName     string        `json:"original_name"`
-	Overview         string        `json:"overview"`
-	PosterPath       string        `json:"poster_path"`
-	BackdropPath     string        `json:"backdrop_path"`
-	FirstAirDate     string        `json:"first_air_date"`
-	EpisodeRunTime   []int         `json:"episode_run_time"`
-	VoteAverage      float64       `json:"vote_average"`
-	VoteCount        int           `json:"vote_count"`
-	Genres           []TMDBGenre   `json:"genres"`
-	OriginCountry    []string      `json:"origin_country"`
-	OriginalLanguage string        `json:"original_language"`
-	NumberOfSeasons  int           `json:"number_of_seasons"`
-	NumberOfEpisodes int           `json:"number_of_episodes"`
-	Seasons          []TMDBSeason  `json:"seasons"`
-	Credits struct {
+	ID               int          `json:"id"`
+	Name             string       `json:"name"`
+	OriginalName     string       `json:"original_name"`
+	Overview         string       `json:"overview"`
+	PosterPath       string       `json:"poster_path"`
+	BackdropPath     string       `json:"backdrop_path"`
+	FirstAirDate     string       `json:"first_air_date"`
+	EpisodeRunTime   []int        `json:"episode_run_time"`
+	VoteAverage      float64      `json:"vote_average"`
+	VoteCount        int          `json:"vote_count"`
+	Genres           []TMDBGenre  `json:"genres"`
+	OriginCountry    []string     `json:"origin_country"`
+	OriginalLanguage string       `json:"original_language"`
+	NumberOfSeasons  int          `json:"number_of_seasons"`
+	NumberOfEpisodes int          `json:"number_of_episodes"`
+	Seasons          []TMDBSeason `json:"seasons"`
+	Credits          struct {
 		Cast []struct {
 			Name      string `json:"name"`
 			Character string `json:"character"`
@@ -153,16 +153,16 @@ type TMDBSeasonDetails struct {
 }
 
 type TMDBEpisode struct {
-	ID             int     `json:"id"`
-	EpisodeNumber  int     `json:"episode_number"`
-	SeasonNumber   int     `json:"season_number"`
-	Name           string  `json:"name"`
-	Overview       string  `json:"overview"`
-	AirDate        string  `json:"air_date"`
-	StillPath      string  `json:"still_path"`
-	VoteAverage    float64 `json:"vote_average"`
-	VoteCount      int     `json:"vote_count"`
-	Runtime        int     `json:"runtime"`
+	ID            int     `json:"id"`
+	EpisodeNumber int     `json:"episode_number"`
+	SeasonNumber  int     `json:"season_number"`
+	Name          string  `json:"name"`
+	Overview      string  `json:"overview"`
+	AirDate       string  `json:"air_date"`
+	StillPath     string  `json:"still_path"`
+	VoteAverage   float64 `json:"vote_average"`
+	VoteCount     int     `json:"vote_count"`
+	Runtime       int     `json:"runtime"`
 }
 
 type TMDBConfiguration struct {

@@ -42,7 +42,6 @@ type YGGService interface {
 	SetConfig(cfg *config.Config)
 }
 
-
 type ApibayService interface {
 	SearchTorrents(query string, mediaType string, season, episode int) (*models.TorrentResults, error)
 	SearchTorrentsSpecificEpisode(query string, mediaType string, season, episode int) (*models.TorrentResults, error)
