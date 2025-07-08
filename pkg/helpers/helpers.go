@@ -12,7 +12,6 @@ import (
 type Config struct {
 	TMDBAPIKey       string   `json:"TMDB_API_KEY"`
 	APIKeyAlldebrid  string   `json:"API_KEY_ALLDEBRID"`
-	LangToShow       []string `json:"LANG_TO_SHOW"`
 	ResolutionToShow []string `json:"RESOLUTION_TO_SHOW"`
 }
 
@@ -48,15 +47,3 @@ func (c *Config) IsResolutionAllowed(resolution string) bool {
 	return false
 }
 
-// IsLanguageAllowed checks if a language is allowed
-func (c *Config) IsLanguageAllowed(language string) bool {
-	if len(c.LangToShow) == 0 {
-		return true
-	}
-	for _, allowed := range c.LangToShow {
-		if allowed == language {
-			return true
-		}
-	}
-	return false
-}

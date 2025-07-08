@@ -104,15 +104,7 @@
          │
          ▼
 ┌─────────────────────────────────────┐
-│ Filter 1: Language                  │
-│ - Check against LANG_TO_SHOW        │
-│ - Apibay = "VO", YGG = parse title │
-│ - Pass if matches or no filter     │
-└────────┬────────────────────────────┘
-         │ Passed
-         ▼
-┌─────────────────────────────────────┐
-│ Filter 2: Year (Movies only)        │
+│ Filter 1: Year (Movies only)        │
 │ - Extract year from title           │
 │ - Allow ±1 year tolerance           │
 │ - Pass if matches or no year       │
@@ -132,7 +124,7 @@
          │ Classified
          ▼
 ┌─────────────────────────────────────┐
-│ Filter 3: Resolution                │
+│ Filter 2: Resolution                │
 │ - Parse resolution from title       │
 │ - Check against RES_TO_SHOW         │
 │ - Pass if matches or no filter     │
@@ -265,11 +257,6 @@
 
 ```
 User Config
-├── LANG_TO_SHOW: ["MULTI", "VO", "VFF", "VF", "FRENCH"]
-│   └── Affects: Torrent filtering in ProcessTorrents()
-│       - Apibay torrents tagged as "VO"
-│       - YGG torrents parsed from title
-│
 ├── RES_TO_SHOW: ["2160p", "1080p", "720p", "480p"]
 │   └── Affects: Resolution filtering after classification
 │       - Priority order for torrent sorting

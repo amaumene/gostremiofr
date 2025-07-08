@@ -68,10 +68,6 @@ func (c *Config) Validate() error {
 		c.ResToShow = constants.DefaultResolutions
 	}
 
-	if len(c.LangToShow) == 0 {
-		c.LangToShow = constants.DefaultLanguages
-	}
-
 	return nil
 }
 
@@ -81,20 +77,11 @@ func (c *Config) InitMaps() {
 		for _, res := range c.ResToShow {
 			c.resMap[strings.ToLower(res)] = true
 		}
-
-		c.langMap = make(map[string]bool)
-		for _, lang := range c.LangToShow {
-			c.langMap[strings.ToLower(lang)] = true
-		}
 	})
 }
 
 func (c *Config) IsResolutionAllowed(res string) bool {
 	return c.resMap[strings.ToLower(res)]
-}
-
-func (c *Config) IsLanguageAllowed(lang string) bool {
-	return c.langMap[strings.ToLower(lang)]
 }
 
 func (c *Config) GetResolutionPriority(res string) int {
@@ -105,51 +92,6 @@ func (c *Config) GetResolutionPriority(res string) int {
 			return len(c.ResToShow) - i
 		}
 	}
-	return 0 // Not in list = lowest priority
-}
-
-func (c *Config) GetLanguagePriority(title string) int {
-	titleLower := strings.ToLower(title)
-
-	// Check each configured language in order of preference
-	for i, lang := range c.LangToShow {
-		langLower := strings.ToLower(lang)
-
-		switch langLower {
-		case "multi", "multi_fr":
-			if strings.Contains(titleLower, "multi") {
-				return len(c.LangToShow) - i
-			}
-		case "french", "vf", "vff":
-			if strings.Contains(titleLower, "french") ||
-				strings.Contains(titleLower, "vff") ||
-				strings.Contains(titleLower, "vf") ||
-				strings.Contains(titleLower, "truefrench") {
-				return len(c.LangToShow) - i
-			}
-		case "vo":
-			if strings.Contains(titleLower, "vo") ||
-				strings.Contains(titleLower, "vostfr") ||
-				strings.Contains(titleLower, "english") ||
-				(!strings.Contains(titleLower, "vf") && !strings.Contains(titleLower, "french") && !strings.Contains(titleLower, "multi")) {
-				return len(c.LangToShow) - i
-			}
-		case "english":
-			if strings.Contains(titleLower, "english") ||
-				strings.Contains(titleLower, "vostfr") {
-				return len(c.LangToShow) - i
-			}
-		case "vostfr":
-			if strings.Contains(titleLower, "vostfr") {
-				return len(c.LangToShow) - i
-			}
-		default:
-			if strings.Contains(titleLower, langLower) {
-				return len(c.LangToShow) - i
-			}
-		}
-	}
-
 	return 0 // Not in list = lowest priority
 }
 
@@ -168,17 +110,6 @@ func CreateFromUserData(userConfig map[string]interface{}, baseConfig *Config) *
 			for i, v := range arr {
 				if str, ok := v.(string); ok {
 					cfg.ResToShow[i] = str
-				}
-			}
-		}
-	}
-
-	if val, ok := userConfig["LANG_TO_SHOW"]; ok {
-		if arr, ok := val.([]interface{}); ok {
-			cfg.LangToShow = make([]string, len(arr))
-			for i, v := range arr {
-				if str, ok := v.(string); ok {
-					cfg.LangToShow[i] = str
 				}
 			}
 		}

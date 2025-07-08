@@ -81,7 +81,6 @@ docker run -p 5001:5001 \
 2. Enter your configuration:
    - **TMDB API Key**: For movie/series metadata
    - **Resolutions**: Preferred resolutions in order (e.g., "2160p,1080p,720p,480p")
-   - **Languages**: Preferred languages (e.g., "MULTI,FRENCH,VOSTFR")
    - **AllDebrid API Key**: Your AllDebrid API key
 
 3. Generate the configuration and use the provided manifest URL in Stremio

@@ -19,7 +19,7 @@ GoStremioFR is a Stremio addon that aggregates torrents from multiple French tor
 - TMDB integration for metadata and French title translation
 - AllDebrid integration for instant streaming
 - Intelligent caching system
-- Resolution and language filtering
+- Resolution filtering
 - Concurrent search with timeout protection
 - Sequential torrent processing for optimal performance
 - Generic search infrastructure with unified query format
@@ -158,21 +158,18 @@ handleStream(c *gin.Context) // for tt7678620:3:48
 ```go
 ProcessTorrents(torrents, mediaType, season, episode, serviceName, year)
 ├── For each torrent:
-│   ├── Filter 1: Language check
-│   │   └── MatchesLanguageFilter(title, language)
-│   ├── Filter 2: Year check (movies only)
+│   ├── Filter 1: Year check (movies only)
 │   │   └── MatchesYear(title, year)
 │   ├── Classification:
 │   │   ├── For EZTV: Use provided season/episode
 │   │   ├── For YGG: Parse from title
 │   │   └── Classify as: movie/episode/season/complete_series
-│   ├── Filter 3: Resolution check
+│   ├── Filter 2: Resolution check
 │   │   └── MatchesResolutionFilter(title)
 │   └── Add to appropriate result category
 └── Sort results by priority
     ├── Resolution priority
-    ├── Language priority
-    └── Size considerations
+    └── Size as tie-breaker
 ```
 
 ### D. Sequential Torrent Processing Flow (Updated)
@@ -390,8 +387,7 @@ func processSingleReadyMagnet(magnet MagnetStatus, torrent TorrentInfo, targetSe
 {
   "TMDB_API_KEY": "...",
   "API_KEY_ALLDEBRID": "...",
-  "RES_TO_SHOW": ["2160p", "1080p", "720p", "480p"],
-  "LANG_TO_SHOW": ["MULTI", "VO", "VFF", "VF", "FRENCH"]
+  "RES_TO_SHOW": ["2160p", "1080p", "720p", "480p"]
 }
 ```
 
@@ -430,7 +426,7 @@ func processSingleReadyMagnet(magnet MagnetStatus, torrent TorrentInfo, targetSe
 - Returns JSON array of torrents
 - Hash is uppercase (converted to lowercase internally)
 - Includes seeders/leechers for availability sorting
-- Generic torrent processing applies language/resolution filters
+- Generic torrent processing applies resolution filters
 
 ## Recent Improvements (v4.0)
 
@@ -443,7 +439,7 @@ func processSingleReadyMagnet(magnet MagnetStatus, torrent TorrentInfo, targetSe
 
 ### 2. **Sequential Torrent Processing Revolution**
 - **Complete Algorithm Redesign**: Changed from bulk magnet processing to sequential torrent processing
-- **Priority-Based Processing**: Processes torrents in quality order (resolution → language → size)
+- **Priority-Based Processing**: Processes torrents in quality order (resolution → size)
 - **Immediate Response**: Returns the first working stream without processing remaining torrents
 - **Smart Prioritization**: Complete Seasons → Episodes → Complete Series for episode requests
 - **No Artificial Limits**: Processes until success, ignoring file count limitations
@@ -470,8 +466,7 @@ func processSingleReadyMagnet(magnet MagnetStatus, torrent TorrentInfo, targetSe
 
 ### 6. **User-Defined Quality Prioritization**
 - **Resolution Priority**: Respects user's `RES_TO_SHOW` order
-- **Language Priority**: Respects user's `LANG_TO_SHOW` order (YGG only)
-- **Size Tiebreaking**: Larger files preferred within same quality tier
+- **Size Tiebreaking**: Larger files preferred within same resolution
 - **No Hardcoded Preferences**: All sorting based on user configuration
 
 ### 7. **Source Provider Tracking**
@@ -501,7 +496,7 @@ func processSingleReadyMagnet(magnet MagnetStatus, torrent TorrentInfo, targetSe
 - No unnecessary API calls after success
 
 ### 3. **Efficient Filtering**
-- Early filtering by language and resolution
+- Early filtering by resolution
 - User-defined quality prioritization
 - Year filtering for movies
 - Progressive filtering pipeline
@@ -526,7 +521,6 @@ func processSingleReadyMagnet(magnet MagnetStatus, torrent TorrentInfo, targetSe
 ## Common Issues & Solutions
 
 ### 1. **Provider Results Not Appearing**
-- Check language filter includes "VO" for Apibay torrents
 - Verify resolution filter includes appropriate resolutions
 - Ensure proper query format for each provider
 

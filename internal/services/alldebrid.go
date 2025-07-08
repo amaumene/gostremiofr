@@ -398,10 +398,9 @@ func (a *AllDebrid) processEpisodeFiles(magnets []struct {
 
 				if season > 0 && episode > 0 {
 					resolution := a.fileParsers.parseResolutionFromFilename(link.Filename)
-					language := parseLanguageFromFilename(link.Filename)
 
-					a.logger.Debugf("[AllDebrid] adding episode file: S%02dE%02d - %s (%s, %s)",
-						season, episode, link.Filename, resolution, language)
+					a.logger.Debugf("[AllDebrid] adding episode file: S%02dE%02d - %s (%s)",
+						season, episode, link.Filename, resolution)
 
 					episodeFiles = append(episodeFiles, models.EpisodeFile{
 						Name:          link.Filename,
@@ -411,7 +410,6 @@ func (a *AllDebrid) processEpisodeFiles(magnets []struct {
 						Season:        season,
 						Episode:       episode,
 						Resolution:    resolution,
-						Language:      language,
 						SeasonTorrent: seasonTorrent,
 					})
 				} else {
@@ -515,25 +513,6 @@ func (fp *fileParsers) parseResolutionFromFilename(filename string) string {
 func parseResolutionFromFilename(filename string) string {
 	tempParser := newFileParsers()
 	return tempParser.parseResolutionFromFilename(filename)
-}
-
-func parseLanguageFromFilename(filename string) string {
-	filename = strings.ToLower(filename)
-
-	if strings.Contains(filename, "multi") {
-		return "multi"
-	}
-	if strings.Contains(filename, "french") || strings.Contains(filename, "vf") || strings.Contains(filename, "vff") {
-		return "french"
-	}
-	if strings.Contains(filename, "vostfr") {
-		return "vostfr"
-	}
-	if strings.Contains(filename, "english") || strings.Contains(filename, "vo") {
-		return "english"
-	}
-
-	return "unknown"
 }
 
 // isVideoFile checks if a filename has a video extension using precompiled set

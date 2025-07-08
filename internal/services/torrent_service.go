@@ -55,7 +55,6 @@ type GenericTorrent interface {
 	GetTitle() string
 	GetHash() string
 	GetSource() string
-	GetLanguage() string
 	GetType() string // For services that have type info
 	GetSeason() int  // For services that have season info
 	GetEpisode() int // For services that have episode info
@@ -233,60 +232,12 @@ func (b *BaseTorrentService) GetTorrentPriority(title string) models.Priority {
 		}
 	}
 
-	// Language priority based on user-specified order
-	if b.config != nil {
-		priority.Language = b.config.GetLanguagePriority(title)
-	} else {
-		// Fallback to default priority if no config
-		if strings.Contains(titleLower, "multi") {
-			priority.Language = 3
-		} else if strings.Contains(titleLower, "french") || strings.Contains(titleLower, "vff") || strings.Contains(titleLower, "truefrench") {
-			priority.Language = 2
-		} else {
-			priority.Language = 1
-		}
-	}
 
-	logger.Debugf("[TorrentService] torrent priority details - title: '%s', resolution: %d, language: %d",
-		title, priority.Resolution, priority.Language)
+	logger.Debugf("[TorrentService] torrent priority details - title: '%s', resolution: %d",
+		title, priority.Resolution)
 	return priority
 }
 
-func (b *BaseTorrentService) MatchesLanguageFilter(title string, language string) bool {
-	if b.config == nil {
-		return true
-	}
-
-	logger := logger.New()
-
-	// Check language filter
-	langAllowed := len(b.config.LangToShow) == 0
-	if !langAllowed {
-		// If a language is explicitly provided, use it directly
-		if language != "" {
-			for _, lang := range b.config.LangToShow {
-				if strings.EqualFold(language, lang) {
-					langAllowed = true
-					break
-				}
-			}
-		} else {
-			// Only parse from title if no language is provided (like YGG)
-			for _, lang := range b.config.LangToShow {
-				if b.ContainsLanguage(title, lang) {
-					langAllowed = true
-					break
-				}
-			}
-		}
-
-		if !langAllowed {
-			logger.Debugf("[TorrentService] language filter applied - title: %s, provided language: %s", title, language)
-		}
-	}
-
-	return langAllowed
-}
 
 func (b *BaseTorrentService) MatchesResolutionFilter(title string) bool {
 	if b.config == nil {
@@ -303,33 +254,6 @@ func (b *BaseTorrentService) MatchesResolutionFilter(title string) bool {
 	}
 
 	return true
-}
-
-func (b *BaseTorrentService) ContainsLanguage(title, language string) bool {
-	titleLower := strings.ToLower(title)
-	langLower := strings.ToLower(language)
-
-	switch langLower {
-	case "multi", "multi_fr":
-		return strings.Contains(titleLower, "multi")
-	case "french", "vf", "vff":
-		return strings.Contains(titleLower, "french") ||
-			strings.Contains(titleLower, "vff") ||
-			strings.Contains(titleLower, "vf") ||
-			strings.Contains(titleLower, "truefrench")
-	case "vo":
-		return strings.Contains(titleLower, "vo") ||
-			strings.Contains(titleLower, "vostfr") ||
-			strings.Contains(titleLower, "english") ||
-			(!strings.Contains(titleLower, "vf") && !strings.Contains(titleLower, "french") && !strings.Contains(titleLower, "multi"))
-	case "english":
-		return strings.Contains(titleLower, "english") ||
-			strings.Contains(titleLower, "vostfr")
-	case "vostfr":
-		return strings.Contains(titleLower, "vostfr")
-	default:
-		return strings.Contains(titleLower, langLower)
-	}
 }
 
 func (b *BaseTorrentService) MatchesYear(title string, expectedYear int) bool {
@@ -446,12 +370,7 @@ func (b *BaseTorrentService) SortTorrents(torrents []models.TorrentInfo) {
 			return priorityI.Resolution > priorityJ.Resolution
 		}
 
-		// 2. Then by language priority (higher is better) - only for YGG
-		if torrents[i].Source == "YGG" && torrents[j].Source == "YGG" {
-			if priorityI.Language != priorityJ.Language {
-				return priorityI.Language > priorityJ.Language
-			}
-		}
+		// 2. Size is now the only tie-breaker after resolution
 
 		// 3. Finally by size (larger is better) - crucial tie-breaker
 		return torrents[i].Size > torrents[j].Size
@@ -549,13 +468,7 @@ func (b *BaseTorrentService) ProcessTorrents(torrents []GenericTorrent, mediaTyp
 	logger.Debugf("[%s] torrent processing started - total torrents: %d", serviceName, len(torrents))
 
 	for _, torrent := range torrents {
-		// First filter: language only
-		if !b.MatchesLanguageFilter(torrent.GetTitle(), torrent.GetLanguage()) {
-			logger.Infof("[%s] torrent filtered by language - title: %s, language: %s", serviceName, torrent.GetTitle(), torrent.GetLanguage())
-			continue
-		}
-
-		// Second filter: year matching for movies
+		// First filter: year matching for movies
 		if mediaType == "movie" && !b.MatchesYear(torrent.GetTitle(), year) {
 			logger.Debugf("[%s] torrent filtered by year - title: %s (expected: %d)", serviceName, torrent.GetTitle(), year)
 			continue
@@ -656,7 +569,6 @@ func (y YggTorrentWrapper) GetID() string       { return fmt.Sprintf("%d", y.ID)
 func (y YggTorrentWrapper) GetTitle() string    { return y.Title }
 func (y YggTorrentWrapper) GetHash() string     { return y.Hash }
 func (y YggTorrentWrapper) GetSource() string   { return y.Source }
-func (y YggTorrentWrapper) GetLanguage() string { return "" } // YGG doesn't have explicit language
 func (y YggTorrentWrapper) GetType() string     { return "" } // YGG doesn't have explicit type
 func (y YggTorrentWrapper) GetSeason() int      { return 0 }  // YGG doesn't have explicit season
 func (y YggTorrentWrapper) GetEpisode() int     { return 0 }  // YGG doesn't have explicit episode

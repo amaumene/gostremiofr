@@ -77,9 +77,3 @@ var DefaultResolutions = []string{
 	"480p",
 }
 
-// Supported languages in order of preference
-var DefaultLanguages = []string{
-	"MULTI",
-	"FRENCH",
-	"VOSTFR",
-}

@@ -64,7 +64,6 @@ type EpisodeFile struct {
 	Season        int
 	Episode       int
 	Resolution    string
-	Language      string
 	SeasonTorrent TorrentInfo // Reference to the complete season torrent
 }
 
@@ -84,5 +83,4 @@ type ParsedFileName struct {
 
 type Priority struct {
 	Resolution int
-	Language   int
 }

@@ -227,7 +227,6 @@ func (a ApibayTorrentWrapper) GetHash() string {
 	return strings.ToLower(a.InfoHash)
 }
 func (a ApibayTorrentWrapper) GetSource() string   { return a.Source }
-func (a ApibayTorrentWrapper) GetLanguage() string { return "" } // Parse from title
 func (a ApibayTorrentWrapper) GetType() string     { return "" } // Determine from title
 func (a ApibayTorrentWrapper) GetSeason() int      { return 0 }  // Parse from title
 func (a ApibayTorrentWrapper) GetEpisode() int     { return 0 }  // Parse from title

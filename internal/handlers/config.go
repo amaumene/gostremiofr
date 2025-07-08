@@ -101,7 +101,6 @@ func (h *Handler) handleConfig(c *gin.Context) {
 
           document.getElementById('tmdb').value = decodedConfig.TMDB_API_KEY || "";
           document.getElementById('res').value = (decodedConfig.RES_TO_SHOW || []).join(",");
-          document.getElementById('lang').value = (decodedConfig.LANG_TO_SHOW || []).join(",");
           document.getElementById('alldebrid').value = decodedConfig.API_KEY_ALLDEBRID || "";
           
         } catch (error) {
@@ -114,7 +113,6 @@ func (h *Handler) handleConfig(c *gin.Context) {
       const config = {
         TMDB_API_KEY: document.getElementById('tmdb').value,
         RES_TO_SHOW: document.getElementById('res').value.split(',').map(s => s.trim()).filter(s => s),
-        LANG_TO_SHOW: document.getElementById('lang').value.split(',').map(s => s.trim()).filter(s => s),
         API_KEY_ALLDEBRID: document.getElementById('alldebrid').value
       };
       const encodedConfig = btoa(JSON.stringify(config));
@@ -159,8 +157,6 @@ func (h *Handler) handleConfig(c *gin.Context) {
     <label for="res">Résolutions (séparées par une virgule)</label>
     <input type="text" id="res" value="2160p,1080p,720p,480p" placeholder="Ex: 2160p,1080p,720p">
     
-    <label for="lang">Langues (séparées par une virgule)</label>
-    <input type="text" id="lang" value="MULTI,FRENCH,VOSTFR" placeholder="Ex: MULTI,FRENCH,VOSTFR">
     
     <label for="alldebrid">Clé API AllDebrid</label>
     <input type="text" id="alldebrid" placeholder="Entrez votre clé API AllDebrid">
