@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/amaumene/gostremiofr/pkg/httputil"
 	"github.com/amaumene/gostremiofr/pkg/logger"
 )
 
@@ -124,9 +125,7 @@ func (l *LocalIPCertificate) certificatesValid() bool {
 
 // downloadCertificates downloads the certificate and key from local-ip.sh
 func (l *LocalIPCertificate) downloadCertificates() error {
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-	}
+	client := httputil.NewHTTPClient(30 * time.Second)
 
 	// Download certificate
 	certURL := "https://local-ip.sh/server.pem"

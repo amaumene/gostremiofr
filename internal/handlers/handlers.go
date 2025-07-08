@@ -56,13 +56,7 @@ func (h *Handler) handleHome(c *gin.Context) {
 // Wrapper functions to handle .json extension
 func (h *Handler) handleCatalogWrapper(c *gin.Context) {
 	// Strip .json extension from ID if present
-	id := c.Param("id")
-	if strings.HasSuffix(id, ".json") {
-		c.Params = append(c.Params[:len(c.Params)-1], gin.Param{
-			Key:   "id",
-			Value: strings.TrimSuffix(id, ".json"),
-		})
-	}
+	stripJSONExtension(c, "id")
 
 	// Handle extra path parameters (e.g., /catalog/movie/search/search=term.json)
 	extra := c.Param("extra")
@@ -95,24 +89,12 @@ func (h *Handler) handleCatalogWrapper(c *gin.Context) {
 
 func (h *Handler) handleMetaWrapper(c *gin.Context) {
 	// Strip .json extension from ID if present
-	id := c.Param("id")
-	if strings.HasSuffix(id, ".json") {
-		c.Params = append(c.Params[:len(c.Params)-1], gin.Param{
-			Key:   "id",
-			Value: strings.TrimSuffix(id, ".json"),
-		})
-	}
+	stripJSONExtension(c, "id")
 	h.handleMeta(c)
 }
 
 func (h *Handler) handleStreamWrapper(c *gin.Context) {
 	// Strip .json extension from ID if present
-	id := c.Param("id")
-	if strings.HasSuffix(id, ".json") {
-		c.Params = append(c.Params[:len(c.Params)-1], gin.Param{
-			Key:   "id",
-			Value: strings.TrimSuffix(id, ".json"),
-		})
-	}
+	stripJSONExtension(c, "id")
 	h.handleStream(c)
 }

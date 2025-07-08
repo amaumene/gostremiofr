@@ -14,7 +14,7 @@ RUN go mod init github.com/amaumene/gostremiofr
 RUN go mod tidy
 
 # Build the application with static linking
-RUN CGO_ENABLED=0 go build -a -installsuffix cgo -ldflags '-extldflags "-static"' -o gostremiofr ./cmd/gostremiofr
+RUN CGO_ENABLED=0 go build -a -ldflags "-w -s" -o gostremiofr ./cmd/gostremiofr
 
 # Runtime stage
 FROM scratch

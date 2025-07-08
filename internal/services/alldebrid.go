@@ -3,7 +3,6 @@ package services
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -13,6 +12,7 @@ import (
 	"github.com/amaumene/gostremiofr/internal/constants"
 	"github.com/amaumene/gostremiofr/internal/models"
 	"github.com/amaumene/gostremiofr/pkg/alldebrid"
+	"github.com/amaumene/gostremiofr/pkg/httputil"
 	"github.com/amaumene/gostremiofr/pkg/logger"
 	"github.com/amaumene/gostremiofr/pkg/ratelimiter"
 	"github.com/amaumene/gostremiofr/pkg/security"
@@ -262,14 +262,7 @@ func (a *AllDebrid) checkMagnetStatus(apiKey string, hashes []string) (*magnetSt
 	a.logger.Infof("[AllDebrid] making POST request to %s", requestURL)
 
 	// Use a standard HTTP client with longer timeout and connection pooling
-	httpClient := &http.Client{
-		Timeout: allDebridAPITimeout,
-		Transport: &http.Transport{
-			MaxIdleConns:        10,
-			MaxIdleConnsPerHost: 2,
-			IdleConnTimeout:     30 * time.Second,
-		},
-	}
+	httpClient := httputil.NewHTTPClient(allDebridAPITimeout)
 
 	a.logger.Infof("[AllDebrid] sending POST request...")
 	resp, err := httpClient.PostForm(requestURL, formData)

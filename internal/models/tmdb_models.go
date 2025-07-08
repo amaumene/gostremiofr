@@ -64,38 +64,21 @@ type TMDBGenreResponse struct {
 }
 
 type TMDBMovieDetails struct {
-	ID                  int         `json:"id"`
-	IMDBId              string      `json:"imdb_id"`
-	Title               string      `json:"title"`
-	OriginalTitle       string      `json:"original_title"`
-	Overview            string      `json:"overview"`
-	PosterPath          string      `json:"poster_path"`
-	BackdropPath        string      `json:"backdrop_path"`
-	ReleaseDate         string      `json:"release_date"`
-	Runtime             int         `json:"runtime"`
-	VoteAverage         float64     `json:"vote_average"`
-	VoteCount           int         `json:"vote_count"`
-	Genres              []TMDBGenre `json:"genres"`
-	ProductionCountries []struct {
-		ISO  string `json:"iso_3166_1"`
-		Name string `json:"name"`
-	} `json:"production_countries"`
-	SpokenLanguages []struct {
-		ISO  string `json:"iso_639_1"`
-		Name string `json:"name"`
-	} `json:"spoken_languages"`
-	Credits struct {
-		Cast []struct {
-			Name      string `json:"name"`
-			Character string `json:"character"`
-			Order     int    `json:"order"`
-		} `json:"cast"`
-		Crew []struct {
-			Name       string `json:"name"`
-			Department string `json:"department"`
-			Job        string `json:"job"`
-		} `json:"crew"`
-	} `json:"credits"`
+	ID                  int                 `json:"id"`
+	IMDBId              string              `json:"imdb_id"`
+	Title               string              `json:"title"`
+	OriginalTitle       string              `json:"original_title"`
+	Overview            string              `json:"overview"`
+	PosterPath          string              `json:"poster_path"`
+	BackdropPath        string              `json:"backdrop_path"`
+	ReleaseDate         string              `json:"release_date"`
+	Runtime             int                 `json:"runtime"`
+	VoteAverage         float64             `json:"vote_average"`
+	VoteCount           int                 `json:"vote_count"`
+	Genres              []TMDBGenre         `json:"genres"`
+	ProductionCountries []ProductionCountry `json:"production_countries"`
+	SpokenLanguages     []SpokenLanguage    `json:"spoken_languages"`
+	Credits             Credits             `json:"credits"`
 }
 
 type TMDBTVDetails struct {
@@ -115,21 +98,8 @@ type TMDBTVDetails struct {
 	NumberOfSeasons  int          `json:"number_of_seasons"`
 	NumberOfEpisodes int          `json:"number_of_episodes"`
 	Seasons          []TMDBSeason `json:"seasons"`
-	Credits          struct {
-		Cast []struct {
-			Name      string `json:"name"`
-			Character string `json:"character"`
-			Order     int    `json:"order"`
-		} `json:"cast"`
-		Crew []struct {
-			Name       string `json:"name"`
-			Department string `json:"department"`
-			Job        string `json:"job"`
-		} `json:"crew"`
-	} `json:"credits"`
-	ExternalIds struct {
-		IMDBId string `json:"imdb_id"`
-	} `json:"external_ids"`
+	Credits          Credits      `json:"credits"`
+	ExternalIds      ExternalIds  `json:"external_ids"`
 }
 
 type TMDBSeason struct {

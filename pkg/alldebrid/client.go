@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/amaumene/gostremiofr/pkg/httputil"
 )
 
 // Client represents an AllDebrid API client
@@ -19,10 +21,8 @@ type Client struct {
 // NewClient creates a new AllDebrid API client
 func NewClient() *Client {
 	return &Client{
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
-		baseURL: "https://api.alldebrid.com/v4",
+		httpClient: httputil.NewHTTPClient(30 * time.Second),
+		baseURL:    "https://api.alldebrid.com/v4",
 	}
 }
 

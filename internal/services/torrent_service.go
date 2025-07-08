@@ -14,6 +14,7 @@ import (
 	"github.com/amaumene/gostremiofr/internal/config"
 	"github.com/amaumene/gostremiofr/internal/database"
 	"github.com/amaumene/gostremiofr/internal/models"
+	"github.com/amaumene/gostremiofr/pkg/httputil"
 	"github.com/amaumene/gostremiofr/pkg/logger"
 	"github.com/amaumene/gostremiofr/pkg/ratelimiter"
 )
@@ -76,15 +77,8 @@ func NewBaseTorrentService(db database.Database, cache *cache.LRUCache, rateLimi
 		db:          db,
 		cache:       cache,
 		rateLimiter: ratelimiter.NewTokenBucket(int64(rateLimit), int64(burstLimit)),
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-			Transport: &http.Transport{
-				MaxIdleConns:        10,
-				MaxIdleConnsPerHost: 2,
-				IdleConnTimeout:     30 * time.Second,
-			},
-		},
-		logger: logger.New(),
+		httpClient:  httputil.NewHTTPClient(30 * time.Second),
+		logger:      logger.New(),
 	}
 }
 

@@ -9,6 +9,33 @@ import (
 	"github.com/amaumene/gostremiofr/bolthold"
 )
 
+// TMDBCache represents cached TMDB data
+type TMDBCache struct {
+	IMDBId    string
+	Type      string
+	Title     string
+	Year      int
+	CreatedAt time.Time
+}
+
+// Magnet represents a magnet link
+type Magnet struct {
+	ID      string
+	Hash    string
+	Name    string
+	AddedAt time.Time
+}
+
+// Database interface for database operations
+type Database interface {
+	GetCachedTMDB(imdbId string) (*TMDBCache, error)
+	StoreTMDBCache(cache *TMDBCache) error
+	StoreMagnet(magnet *Magnet) error
+	GetMagnets() ([]Magnet, error)
+	DeleteMagnet(id string) error
+	Close() error
+}
+
 type BoltDB struct {
 	store *bolthold.Store
 }

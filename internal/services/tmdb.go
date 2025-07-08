@@ -12,6 +12,7 @@ import (
 	"github.com/amaumene/gostremiofr/internal/constants"
 	"github.com/amaumene/gostremiofr/internal/database"
 	"github.com/amaumene/gostremiofr/internal/models"
+	"github.com/amaumene/gostremiofr/pkg/httputil"
 	"github.com/amaumene/gostremiofr/pkg/logger"
 	"github.com/amaumene/gostremiofr/pkg/ratelimiter"
 	"github.com/amaumene/gostremiofr/pkg/security"
@@ -40,16 +41,9 @@ func NewTMDB(apiKey string, cache *cache.LRUCache) *TMDB {
 		apiKey:      sanitizedKey,
 		cache:       cache,
 		rateLimiter: ratelimiter.NewTokenBucket(constants.TMDBRateLimit, constants.TMDBRateBurst),
-		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
-			Transport: &http.Transport{
-				MaxIdleConns:        10,
-				MaxIdleConnsPerHost: 2,
-				IdleConnTimeout:     30 * time.Second,
-			},
-		},
-		logger:    logger.New(),
-		validator: validator,
+		httpClient:  httputil.NewHTTPClient(10 * time.Second),
+		logger:      logger.New(),
+		validator:   validator,
 	}
 }
 
