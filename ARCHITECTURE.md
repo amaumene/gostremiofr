@@ -19,7 +19,7 @@ GoStremioFR is a Stremio addon that aggregates torrents from multiple French tor
 - TMDB integration for metadata and French title translation
 - AllDebrid integration for instant streaming
 - Intelligent caching system
-- Resolution filtering
+- Resolution and size-based sorting
 - Concurrent search with timeout protection
 - Sequential torrent processing for optimal performance
 - Generic search infrastructure with unified query format
@@ -100,7 +100,7 @@ handleStream(c *gin.Context)
 │   │   │   ├── YGG.SearchTorrents(query, "movie", 0, 0)
 │   │   │   │   ├── getFrenchTitle(query) // Translates to French
 │   │   │   │   ├── API call to YGG
-│   │   │   │   └── processTorrents() // Filters & sorts
+│   │   │   │   └── processTorrents() // Filters & sorts by resolution/size
 │   │   │   └── Apibay.SearchTorrents(query + year, "movie", 0, 0)
 │   │   │       ├── Build query with year
 │   │   │       ├── API call to Apibay
@@ -168,8 +168,8 @@ ProcessTorrents(torrents, mediaType, season, episode, serviceName, year)
 │   │   └── MatchesResolutionFilter(title)
 │   └── Add to appropriate result category
 └── Sort results by priority
-    ├── Resolution priority
-    └── Size as tie-breaker
+    ├── Resolution priority (from user config)
+    └── Size as tie-breaker (larger is better)
 ```
 
 ### D. Sequential Torrent Processing Flow (Updated)
@@ -180,6 +180,7 @@ processResults()
 ├── Create priority-ordered torrent list:
 │   ├── For episodes (S3E48): Complete Seasons → Episodes → Complete Series
 │   └── For movies: Movies → Episodes → Season Packs → Complete Series
+├── Sort all torrents by priority (resolution, then size)
 └── processSequentialTorrents() - Process one by one:
     ├── For each torrent in priority order:
     │   ├── Get hash (fetch for YGG if needed)
@@ -228,13 +229,12 @@ type YggTorrent struct {
     Source string  // "YGG"
 }
 
-type EZTVTorrent struct {
-    ID      int
-    Title   string
-    Hash    string  // Provided by EZTV API
-    Season  string  // "3"
-    Episode string  // "48"
-    Source  string  // "EZTV"
+type ApibayTorrent struct {
+    ID       string
+    Name     string
+    InfoHash string  // Provided by Apibay API
+    Size     string  // File size as string
+    Source   string  // "Apibay"
 }
 
 // Unified torrent info
@@ -420,7 +420,6 @@ func processSingleReadyMagnet(magnet MagnetStatus, torrent TorrentInfo, targetSe
 ### Provider-Specific Behavior
 - **YGG**: Translates titles to French before applying generic format
 - **Apibay**: Uses generic format directly
-- **EZTV**: Uses IMDB ID-based search
 
 ### Response Processing
 - Returns JSON array of torrents
@@ -428,7 +427,59 @@ func processSingleReadyMagnet(magnet MagnetStatus, torrent TorrentInfo, targetSe
 - Includes seeders/leechers for availability sorting
 - Generic torrent processing applies resolution filters
 
-## Recent Improvements (v4.0)
+## Recent Improvements (v5.0)
+
+### Major Architectural Changes
+
+#### 1. **Language Filter Removal & Simplified Sorting**
+- **Removed Complex Language Logic**: Eliminated language-based filtering and prioritization
+- **Simplified Torrent Sorting**: Now uses only resolution (from user config) + size as tie-breaker
+- **Fixed Priority Bug**: Corrected critical issue where low-quality Apibay torrents were processed before high-quality YGG season packs
+- **Cleaner Algorithm**: Reduced sorting complexity while maintaining effectiveness
+
+#### 2. **Enhanced Multi-threading & Resource Management**
+- **HTTP Connection Pooling**: Added connection pooling to all HTTP clients (10 max idle, 2 per host)
+- **Optimized Concurrency**: Fixed potential goroutine leaks and improved resource cleanup
+- **Better Error Handling**: Enhanced concurrent operation error propagation
+
+#### 3. **Code Quality & Maintenance**
+- **Removed Legacy Code**: Eliminated ~300+ lines of unused functions and redundant comments
+- **KISS Principle**: Focused on keeping solutions simple and maintainable
+- **Cleaned Up Interfaces**: Removed unused interface methods and wrapper functions
+
+### Updated Architecture Components
+
+#### Torrent Sorting Algorithm (Simplified)
+```go
+func SortTorrents(torrents []models.TorrentInfo) {
+    sort.Slice(torrents, func(i, j int) bool {
+        priorityI := GetTorrentPriority(torrents[i].Title)
+        priorityJ := GetTorrentPriority(torrents[j].Title)
+        
+        // 1. First sort by resolution (higher is better)
+        if priorityI.Resolution != priorityJ.Resolution {
+            return priorityI.Resolution > priorityJ.Resolution
+        }
+        
+        // 2. Finally by size (larger is better)
+        return torrents[i].Size > torrents[j].Size
+    })
+}
+```
+
+#### Connection Pooling Configuration
+```go
+httpClient := &http.Client{
+    Timeout: timeout,
+    Transport: &http.Transport{
+        MaxIdleConns:        10,
+        MaxIdleConnsPerHost: 2,
+        IdleConnTimeout:     30 * time.Second,
+    },
+}
+```
+
+## Previous Improvements (v4.0)
 
 ### 1. **Code Quality & Architecture Improvements**
 - **Refactored Stream Handler**: Broke down large functions into focused, single-purpose functions

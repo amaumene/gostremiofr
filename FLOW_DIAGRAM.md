@@ -68,8 +68,12 @@
 ┌─────────────────────────────────────────────────────────────┐
 │                    processResults()                          │
 │                                                             │
-│  1. Collect Magnets:                                       │
-│     - EZTV torrents already have hashes                    │
+│  1. Sort all torrents by priority:                        │
+│     - Resolution priority (from user config)               │
+│     - Size as tie-breaker (larger is better)              │
+│                                                             │
+│  2. Collect Magnets:                                       │
+│     - Apibay torrents already have hashes                  │
 │     - YGG torrents: fetch missing hashes                   │
 │                                                             │
 │  2. Upload to AllDebrid:                                   │
@@ -84,7 +88,7 @@
 │                                                             │
 │  4. Create Streams:                                        │
 │     - Only from ready magnets                              │
-│     - Sort by resolution, language                         │
+│     - Return first working stream immediately              │
 └────────┬────────────────────────────────────────────────────┘
          │
          ▼
@@ -99,7 +103,7 @@
 ```
 ┌─────────────────┐
 │ Raw Torrents    │
-│ from YGG/EZTV   │
+│ from YGG/Apibay │
 └────────┬────────┘
          │
          ▼
@@ -149,7 +153,8 @@
          │
          ▼
 ┌──────────────────────────────────────┐
-│ Extract Magnets                      │
+│ Sort & Extract Magnets               │
+│ - Sort by priority (resolution+size) │
 │ - Apibay: Use provided hash          │
 │ - YGG: Fetch hash if missing         │
 │ - Sequential processing (no limits)  │
@@ -159,7 +164,7 @@
 ┌──────────────────────────────────────┐
 │ Sequential Processing                │
 │ - Process torrents one by one        │
-│ - In quality order (res, lang, size) │
+│ - In quality order (res, size)       │
 └────────┬─────────────────────────────┘
          │
          ▼
@@ -260,6 +265,7 @@ User Config
 ├── RES_TO_SHOW: ["2160p", "1080p", "720p", "480p"]
 │   └── Affects: Resolution filtering after classification
 │       - Priority order for torrent sorting
+│       - Size-based tie-breaking within same resolution
 │
 ├── API_KEY_ALLDEBRID: "..."
 │   └── Required for:
@@ -272,4 +278,63 @@ User Config
         - Getting content metadata
         - French title translation
         - Catalog browsing
+```
+
+## v5.0 Flow Improvements
+
+### Simplified Torrent Sorting Algorithm
+
+```
+┌────────────────────────────────────────┐
+│ Before v5.0 (Complex Sorting)         │
+├────────────────────────────────────────┤
+│ 1. Language priority (YGG vs others)  │
+│ 2. Provider preference (YGG > Apibay) │
+│ 3. Resolution priority                 │
+│ 4. Size as tie-breaker               │
+│ Problem: Apibay processed first!      │
+└────────────────────────────────────────┘
+         │
+         ▼ SIMPLIFIED
+┌────────────────────────────────────────┐
+│ v5.0 (Clean Sorting)                  │
+├────────────────────────────────────────┤
+│ 1. Resolution priority (user config)  │
+│ 2. Size as tie-breaker (larger better)│
+│ Result: YGG season packs prioritized! │
+└────────────────────────────────────────┘
+```
+
+### Resource Management Improvements
+
+```
+┌──────────────────────────────────┐
+│ HTTP Client Connections         │
+├──────────────────────────────────┤
+│ Before: Default connections      │
+│ - No connection pooling          │
+│ - Potential resource exhaustion  │
+│                                  │
+│ v5.0: Connection Pooling         │
+│ - MaxIdleConns: 10               │
+│ - MaxIdleConnsPerHost: 2         │
+│ - IdleConnTimeout: 30s           │
+│ - Applied to all HTTP clients    │
+└──────────────────────────────────┘
+```
+
+### Code Quality Impact
+
+```
+┌──────────────────────────────────┐
+│ Removed Complexity (~300 lines) │
+├──────────────────────────────────┤
+│ - Unused language filter logic  │
+│ - Legacy compatibility functions │
+│ - Redundant search methods      │
+│ - Obsolete interface methods    │
+│                                 │
+│ Result: Simpler, maintainable   │
+│ codebase following KISS principle│
+└──────────────────────────────────┘
 ```

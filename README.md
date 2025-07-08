@@ -12,9 +12,9 @@ A high-performance Stremio addon for French content, written in Go. This addon i
 - 💾 **Smart Caching**: Built-in LRU cache and BoltDB database for faster responses
 - 🔐 **Secure API Handling**: Sanitized and validated API keys with masked logging
 - 🌐 **AllDebrid Integration**: Stream torrents through AllDebrid for better performance
-- 📊 **Intelligent Sorting**: Prioritizes streams by resolution, language, and availability
+- 📊 **Intelligent Sorting**: Prioritizes streams by resolution and size
 - 🏷️ **Source Tracking**: Stream results show the original torrent provider (YGG, Apibay)
-- 🇫🇷 **French-Focused**: Catalogs and metadata optimized for French content
+- 🇫🇷 **French-Focused**: Catalogs optimized for French content via YGG integration
 - ⚡ **Sequential Processing**: Processes torrents one-by-one in quality order until a working stream is found
 - 📦 **Season Pack Support**: Intelligently extracts specific episodes from complete season torrents
 - ⏱️ **Advanced Timeout Handling**: Request-level, search-level, and rate limiter timeouts prevent hanging
@@ -142,7 +142,9 @@ gostremiofr/
 ├── pkg/                # Public packages
 │   ├── logger/         # Custom logging
 │   ├── security/       # Security utilities
-│   └── helpers/        # Helper functions
+│   ├── ratelimiter/    # Rate limiting utilities
+│   ├── alldebrid/      # AllDebrid API client
+│   └── ssl/            # SSL certificate utilities
 └── docs/               # Documentation
 ```
 
@@ -213,7 +215,7 @@ Set the log level using the `LOG_LEVEL` environment variable.
 - **Smart Season Pack Handling**: Extracts only requested episodes from complete seasons
 - **Request Timeouts**: 30-second overall timeout with multiple timeout layers
 - **Immediate Response**: Returns the first working stream without processing remaining torrents
-- **Quality Prioritization**: User-defined resolution and language preferences with size-based tiebreaking
+- **Quality Prioritization**: User-defined resolution preferences with size-based tiebreaking
 
 ## Security
 
@@ -256,7 +258,7 @@ Benefits:
 1. **No streams found**
    - Verify your AllDebrid API key is valid
    - Check if the content is available on supported trackers
-   - Ensure your preferred languages/resolutions are configured
+   - Ensure your preferred resolutions are configured
 
 2. **Slow responses**
    - Check your internet connection
@@ -276,26 +278,31 @@ Enable debug logging for detailed information:
 LOG_LEVEL=debug ./gostremiofr
 ```
 
-## Recent Improvements (v4.0)
+## Recent Improvements (v5.0)
 
-### Code Quality & Maintainability
-- **Refactored stream handler**: Broke down large functions into focused, single-purpose functions
-- **Eliminated code duplication**: Replaced 3 nearly identical search functions with 1 generic function
-- **Improved error handling**: Added custom error types with context and type classification
-- **Enhanced documentation**: Added comprehensive comments and package documentation
-- **Simplified configuration**: Removed unused `FILES_TO_SHOW` configuration
-- **Better file organization**: Split large model files into domain-specific modules
+### Major Updates
+- **Language Filter Removal**: Simplified torrent prioritization by removing language-based filtering
+- **Improved Torrent Sorting**: Fixed critical bug where low-quality Apibay torrents were processed before high-quality YGG season packs
+- **Size-based Tie-breaking**: Implemented proper size-based sorting as the secondary criteria after resolution
+- **Code Cleanup**: Removed unused functions, redundant comments, and legacy code (~300+ lines removed)
+- **Multi-threading Fixes**: Added HTTP connection pooling to prevent resource exhaustion
 
-### Technical Improvements
-- **Generic search infrastructure**: Unified search logic with strategy pattern
-- **Helper functions**: Extracted common patterns into reusable utilities
-- **Constants management**: Centralized magic numbers and timeouts
-- **Streamlined processing**: Reduced code size by ~25% while maintaining functionality
+### Performance Improvements
+- **Priority-based Processing**: Torrents are now properly sorted before sequential processing
+- **Connection Pooling**: HTTP clients now use connection pooling (10 max idle, 2 per host)
+- **Reduced Memory Usage**: Cleaned up unused code and optimized data structures
+- **Better Resource Management**: Fixed potential goroutine leaks and improved cleanup
 
-### Fixed Logic Issues
-- **Episode matching**: Corrected season pack processing to properly match target episodes
-- **Search prioritization**: Improved episode file detection in season torrents
-- **Error handling**: Better error propagation and logging throughout the pipeline
+### Code Quality Enhancements
+- **Simplified Logic**: Removed complex language filtering logic for cleaner, more maintainable code
+- **Better Error Handling**: Improved error context and reporting throughout the application
+- **Modular Architecture**: Continued refactoring toward cleaner separation of concerns
+- **KISS Principle**: Focused on keeping solutions simple and maintainable
+
+### Provider Improvements
+- **YGG Priority Fix**: YGG torrents (typically higher quality French content) now properly prioritized
+- **Size Sorting**: Larger torrents of the same resolution are now preferred
+- **Apibay Integration**: Maintained as fallback provider for international content
 
 ## Contributing
 
