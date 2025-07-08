@@ -232,12 +232,10 @@ func (b *BaseTorrentService) GetTorrentPriority(title string) models.Priority {
 		}
 	}
 
-
 	logger.Debugf("[TorrentService] torrent priority details - title: '%s', resolution: %d",
 		title, priority.Resolution)
 	return priority
 }
-
 
 func (b *BaseTorrentService) MatchesResolutionFilter(title string) bool {
 	if b.config == nil {
@@ -370,9 +368,7 @@ func (b *BaseTorrentService) SortTorrents(torrents []models.TorrentInfo) {
 			return priorityI.Resolution > priorityJ.Resolution
 		}
 
-		// 2. Size is now the only tie-breaker after resolution
-
-		// 3. Finally by size (larger is better) - crucial tie-breaker
+		// 2. Finally by size (larger is better)
 		return torrents[i].Size > torrents[j].Size
 	})
 }
@@ -491,16 +487,14 @@ func (b *BaseTorrentService) ProcessTorrents(torrents []GenericTorrent, mediaTyp
 				classification = "movie"
 				shouldAdd = true
 			} else if mediaType == "series" && torrent.GetType() == "tvshow" {
-				// Continue to title-based classification below
+				// Continue to title-based classification
 			} else {
-				// Type doesn't match what we're looking for
 				continue
 			}
 		}
 
 		// For services that provide season/episode info directly
 		if !shouldAdd && torrent.GetSeason() > 0 && torrent.GetEpisode() > 0 {
-			// Check if this episode matches what we're looking for
 			if mediaType == "series" && season > 0 && episode > 0 {
 				if torrent.GetSeason() == season && torrent.GetEpisode() == episode {
 					classification = "episode"
@@ -510,7 +504,6 @@ func (b *BaseTorrentService) ProcessTorrents(torrents []GenericTorrent, mediaTyp
 					logger.Infof("[%s] episode mismatch - found s%02de%02d, requested s%02de%02d: %s", serviceName, torrent.GetSeason(), torrent.GetEpisode(), season, episode, torrent.GetTitle())
 				}
 			} else {
-				// If no specific episode requested, accept any episode
 				classification = "episode"
 				shouldAdd = true
 			}
@@ -559,7 +552,6 @@ func (b *BaseTorrentService) ProcessTorrents(torrents []GenericTorrent, mediaTyp
 	return results
 }
 
-// Wrapper types that implement GenericTorrent interface
 
 type YggTorrentWrapper struct {
 	models.YggTorrent
@@ -569,12 +561,11 @@ func (y YggTorrentWrapper) GetID() string       { return fmt.Sprintf("%d", y.ID)
 func (y YggTorrentWrapper) GetTitle() string    { return y.Title }
 func (y YggTorrentWrapper) GetHash() string     { return y.Hash }
 func (y YggTorrentWrapper) GetSource() string   { return y.Source }
-func (y YggTorrentWrapper) GetType() string     { return "" } // YGG doesn't have explicit type
-func (y YggTorrentWrapper) GetSeason() int      { return 0 }  // YGG doesn't have explicit season
-func (y YggTorrentWrapper) GetEpisode() int     { return 0 }  // YGG doesn't have explicit episode
+func (y YggTorrentWrapper) GetType() string     { return "" }
+func (y YggTorrentWrapper) GetSeason() int      { return 0 }
+func (y YggTorrentWrapper) GetEpisode() int     { return 0 }
 func (y YggTorrentWrapper) GetSize() int64      { return y.Size }
 
-// Helper functions to convert slices to GenericTorrent slices
 
 func WrapYggTorrents(torrents []models.YggTorrent) []GenericTorrent {
 	generic := make([]GenericTorrent, len(torrents))

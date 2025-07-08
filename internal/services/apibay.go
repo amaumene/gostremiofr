@@ -215,7 +215,6 @@ func (e *yearExtractor) extractYear(title string) int {
 	return 0
 }
 
-// Wrapper type that implements GenericTorrent interface
 type ApibayTorrentWrapper struct {
 	ApibayTorrent
 }
@@ -223,13 +222,12 @@ type ApibayTorrentWrapper struct {
 func (a ApibayTorrentWrapper) GetID() string    { return a.ID }
 func (a ApibayTorrentWrapper) GetTitle() string { return a.Name }
 func (a ApibayTorrentWrapper) GetHash() string {
-	// Apibay returns uppercase hashes, convert to lowercase for consistency
 	return strings.ToLower(a.InfoHash)
 }
 func (a ApibayTorrentWrapper) GetSource() string   { return a.Source }
-func (a ApibayTorrentWrapper) GetType() string     { return "" } // Determine from title
-func (a ApibayTorrentWrapper) GetSeason() int      { return 0 }  // Parse from title
-func (a ApibayTorrentWrapper) GetEpisode() int     { return 0 }  // Parse from title
+func (a ApibayTorrentWrapper) GetType() string     { return "" }
+func (a ApibayTorrentWrapper) GetSeason() int      { return 0 }
+func (a ApibayTorrentWrapper) GetEpisode() int     { return 0 }
 func (a ApibayTorrentWrapper) GetSize() int64 {
 	if size, err := strconv.ParseInt(a.Size, 10, 64); err == nil {
 		return size
@@ -237,7 +235,6 @@ func (a ApibayTorrentWrapper) GetSize() int64 {
 	return 0
 }
 
-// Helper function to convert slice to GenericTorrent slice
 func WrapApibayTorrents(torrents []ApibayTorrent) []GenericTorrent {
 	generic := make([]GenericTorrent, len(torrents))
 	for i, torrent := range torrents {

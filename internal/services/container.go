@@ -32,7 +32,6 @@ type AllDebridService interface {
 	CheckMagnets(magnets []models.MagnetInfo, apiKey string) ([]models.ProcessedMagnet, error)
 	UploadMagnet(hash, title, apiKey string) error
 	GetVideoFiles(magnetID, apiKey string) ([]models.VideoFile, error)
-	GetEpisodeFiles(magnetID string, seasonTorrent models.TorrentInfo, apiKey string) ([]models.EpisodeFile, error)
 	UnlockLink(link, apiKey string) (string, error)
 }
 

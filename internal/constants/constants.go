@@ -5,7 +5,7 @@ const (
 	AddonID          = "gostremiofr.stremio.addon"
 	AddonVersion     = "1.0.0"
 	AddonName        = "GoStremioFR"
-	AddonDescription = "French torrent addon with YGG, EZTV, AllDebrid integration and TMDB catalogs"
+	AddonDescription = "French torrent addon with YGG, Apibay, AllDebrid integration and TMDB catalogs"
 
 	// Default configuration values
 	DefaultPort     = "5000"
@@ -21,9 +21,6 @@ const (
 	AllDebridRateLimit = 10
 	AllDebridRateBurst = 2
 
-	// File handling
-	MaxFilenameLength = 255
-	TempFilePrefix    = "gostremiofr-"
 )
 
 // TMDB Genre IDs for movies

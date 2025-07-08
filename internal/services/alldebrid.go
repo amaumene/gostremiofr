@@ -158,36 +158,6 @@ func (a *AllDebrid) UploadMagnet(hash, title, apiKey string) error {
 	return a.checkAPIResponse(resp.Status, resp.Error, resp.Data.Magnets)
 }
 
-func (a *AllDebrid) GetEpisodeFiles(magnetID string, seasonTorrent models.TorrentInfo, apiKey string) ([]models.EpisodeFile, error) {
-	// Validate API key
-	apiKey, err := a.validateAndPrepareAPIKey(apiKey)
-	if err != nil {
-		return nil, err
-	}
-
-	a.rateLimiter.Wait()
-
-	// Get magnet files
-	resp, err := a.client.GetMagnetFiles(apiKey, magnetID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get episode files: %w", err)
-	}
-
-	// Check response status
-	if resp.Status != allDebridStatusSuccess {
-		if resp.Error != nil {
-			return nil, fmt.Errorf("AllDebrid API error: %s - %s", resp.Error.Code, resp.Error.Message)
-		}
-		return nil, fmt.Errorf("AllDebrid API error: %s", resp.Status)
-	}
-
-	// Process files into episode files
-	episodeFiles := a.processEpisodeFiles(resp.Data.Magnets, seasonTorrent)
-
-	a.logger.Debugf("[AllDebrid] extracted %d episode files from season torrent %s", len(episodeFiles), seasonTorrent.Title)
-	return episodeFiles, nil
-}
-
 func (a *AllDebrid) GetVideoFiles(magnetID, apiKey string) ([]models.VideoFile, error) {
 	// Validate API key
 	apiKey, err := a.validateAndPrepareAPIKey(apiKey)
@@ -363,65 +333,8 @@ func (a *AllDebrid) checkAPIResponse(status string, apiError interface{}, magnet
 		return fmt.Errorf("AllDebrid API error: %s", status)
 	}
 
-	// Check for upload-specific errors
-	if magnets != nil {
-		// This assumes the magnets slice has upload error information
-		// Implementation would depend on the specific data structure
-	}
 
 	return nil
-}
-
-// processEpisodeFiles processes magnet links into episode files
-func (a *AllDebrid) processEpisodeFiles(magnets []struct {
-	ID    int64  `json:"id"`
-	Hash  string `json:"hash"`
-	Name  string `json:"name"`
-	Size  int64  `json:"size"`
-	Ready bool   `json:"ready"`
-	Links []struct {
-		Link     string `json:"link"`
-		Filename string `json:"filename"`
-		Size     int64  `json:"size"`
-	} `json:"links"`
-}, seasonTorrent models.TorrentInfo) []models.EpisodeFile {
-	var episodeFiles []models.EpisodeFile
-
-	for _, magnet := range magnets {
-		a.logger.Debugf("[AllDebrid] processing magnet with %d links", len(magnet.Links))
-		for _, link := range magnet.Links {
-			a.logger.Debugf("[AllDebrid] checking file: %s (size: %d)", link.Filename, link.Size)
-			if a.fileParsers.isVideoFile(link.Filename) {
-				// Parse episode info from filename
-				season, episode := a.fileParsers.parseEpisodeFromFilename(link.Filename)
-				a.logger.Debugf("[AllDebrid] parsed episode info from '%s': S%02dE%02d", link.Filename, season, episode)
-
-				if season > 0 && episode > 0 {
-					resolution := a.fileParsers.parseResolutionFromFilename(link.Filename)
-
-					a.logger.Debugf("[AllDebrid] adding episode file: S%02dE%02d - %s (%s)",
-						season, episode, link.Filename, resolution)
-
-					episodeFiles = append(episodeFiles, models.EpisodeFile{
-						Name:          link.Filename,
-						Size:          float64(link.Size),
-						Link:          link.Link,
-						Source:        "AllDebrid",
-						Season:        season,
-						Episode:       episode,
-						Resolution:    resolution,
-						SeasonTorrent: seasonTorrent,
-					})
-				} else {
-					a.logger.Debugf("[AllDebrid] skipping file with no episode info: %s", link.Filename)
-				}
-			} else {
-				a.logger.Debugf("[AllDebrid] skipping non-video file: %s", link.Filename)
-			}
-		}
-	}
-
-	return episodeFiles
 }
 
 // processVideoFiles processes magnet links into video files
@@ -492,12 +405,6 @@ func (fp *fileParsers) parseEpisodeFromFilename(filename string) (season int, ep
 	return 0, 0
 }
 
-// Legacy function for backward compatibility
-func parseEpisodeFromFilename(filename string) (season int, episode int) {
-	// Create a temporary parser for legacy calls
-	tempParser := newFileParsers()
-	return tempParser.parseEpisodeFromFilename(filename)
-}
 
 // parseResolutionFromFilename extracts resolution from filename using compiled patterns
 func (fp *fileParsers) parseResolutionFromFilename(filename string) string {
@@ -509,11 +416,6 @@ func (fp *fileParsers) parseResolutionFromFilename(filename string) string {
 	return "unknown"
 }
 
-// Legacy function for backward compatibility
-func parseResolutionFromFilename(filename string) string {
-	tempParser := newFileParsers()
-	return tempParser.parseResolutionFromFilename(filename)
-}
 
 // isVideoFile checks if a filename has a video extension using precompiled set
 func (fp *fileParsers) isVideoFile(filename string) bool {
@@ -526,8 +428,3 @@ func (fp *fileParsers) isVideoFile(filename string) bool {
 	return false
 }
 
-// Legacy function for backward compatibility
-func isVideoFile(filename string) bool {
-	tempParser := newFileParsers()
-	return tempParser.isVideoFile(filename)
-}

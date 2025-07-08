@@ -99,9 +99,14 @@ func (c *Config) GetResolutionPriority(res string) int {
 func CreateFromUserData(userConfig map[string]interface{}, baseConfig *Config) *Config {
 	cfg := &Config{}
 
-	// Copy from existing config if available
+	// Copy fields from existing config if available
 	if baseConfig != nil {
-		*cfg = *baseConfig
+		cfg.TMDBAPIKey = baseConfig.TMDBAPIKey
+		cfg.APIKeyAllDebrid = baseConfig.APIKeyAllDebrid
+		cfg.ResToShow = append([]string{}, baseConfig.ResToShow...)
+		cfg.DatabasePath = baseConfig.DatabasePath
+		cfg.CacheSize = baseConfig.CacheSize
+		cfg.CacheTTL = baseConfig.CacheTTL
 	}
 
 	if val, ok := userConfig["RES_TO_SHOW"]; ok {
