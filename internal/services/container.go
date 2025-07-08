@@ -9,13 +9,14 @@ import (
 )
 
 type Container struct {
-	TMDB      TMDBService
-	AllDebrid AllDebridService
-	YGG       YGGService
-	Apibay    ApibayService
-	Cache     *cache.LRUCache
-	DB        database.Database
-	Logger    logger.Logger
+	TMDB          TMDBService
+	AllDebrid     AllDebridService
+	YGG           YGGService
+	Apibay        ApibayService
+	Cache         *cache.LRUCache
+	DB            database.Database
+	Logger        logger.Logger
+	TorrentSorter *TorrentSorter
 }
 
 type TMDBService interface {

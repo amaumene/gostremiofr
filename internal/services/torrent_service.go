@@ -453,7 +453,7 @@ func (b *BaseTorrentService) SortTorrents(torrents []models.TorrentInfo) {
 			}
 		}
 
-		// 3. Finally by size (larger is better)
+		// 3. Finally by size (larger is better) - crucial tie-breaker
 		return torrents[i].Size > torrents[j].Size
 	})
 }

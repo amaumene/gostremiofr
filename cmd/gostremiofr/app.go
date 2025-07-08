@@ -68,13 +68,14 @@ func InitializeServices() {
 
 	// Initialize services container
 	serviceContainer := &services.Container{
-		TMDB:      tmdbService,
-		AllDebrid: allDebridService,
-		YGG:       yggService,
-		Apibay:    apibayService,
-		Cache:     tmdbMemoryCache,
-		DB:        DB,
-		Logger:    logger.New(),
+		TMDB:          tmdbService,
+		AllDebrid:     allDebridService,
+		YGG:           yggService,
+		Apibay:        apibayService,
+		Cache:         tmdbMemoryCache,
+		DB:            DB,
+		Logger:        logger.New(),
+		TorrentSorter: services.NewTorrentSorter(nil), // Will be updated with config later
 	}
 
 	// Initialize handler

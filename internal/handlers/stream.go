@@ -139,6 +139,9 @@ func (h *Handler) configureTorrentServices(userConfig *config.Config) {
 	if h.services.Apibay != nil {
 		h.services.Apibay.SetConfig(userConfig)
 	}
+	if h.services.TorrentSorter != nil {
+		h.services.TorrentSorter = services.NewTorrentSorter(userConfig)
+	}
 }
 
 func (h *Handler) getMediaInfo(imdbID string) (string, string, int, error) {
@@ -576,6 +579,13 @@ func (h *Handler) processResults(results *models.CombinedTorrentResults, apiKey 
 	}
 
 	h.services.Logger.Infof("[StreamHandler] processing %d torrents in priority order", len(allTorrents))
+
+	// Sort all torrents by priority before sequential processing
+	sorter := h.services.TorrentSorter
+	if sorter != nil {
+		sorter.SortTorrents(allTorrents)
+		h.services.Logger.Infof("[StreamHandler] sorted torrents by priority (resolution, language, provider, size)")
+	}
 
 	return h.processSequentialTorrents(allTorrents, apiKey, userConfig, targetSeason, targetEpisode)
 }
