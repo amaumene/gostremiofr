@@ -70,7 +70,7 @@ func (h *Handler) handleStream(c *gin.Context) {
 	userConfigStruct := config.CreateFromUserData(userConfig, h.config)
 	h.configureTorrentServices(userConfigStruct)
 
-	mediaType, title, year, err := h.getMediaInfo(imdbID)
+	mediaType, title, year, originalLanguage, err := h.getMediaInfo(imdbID)
 	if err != nil {
 		tmdbErr := errors.NewTMDBError(fmt.Sprintf("failed to get info for %s", imdbID), err)
 		h.services.Logger.Errorf("[StreamHandler] %v", tmdbErr)
@@ -80,7 +80,7 @@ func (h *Handler) handleStream(c *gin.Context) {
 
 	h.services.Logger.Infof("[StreamHandler] processing %s request - %s (%s)", mediaType, title, imdbID)
 
-	streams := h.searchStreams(mediaType, title, year, season, episode, apiKey, imdbID, userConfigStruct)
+	streams := h.searchStreams(mediaType, title, year, season, episode, apiKey, imdbID, userConfigStruct, originalLanguage)
 	c.JSON(http.StatusOK, models.StreamResponse{Streams: streams})
 }
 
@@ -144,27 +144,27 @@ func (h *Handler) configureTorrentServices(userConfig *config.Config) {
 	}
 }
 
-func (h *Handler) getMediaInfo(imdbID string) (string, string, int, error) {
-	mediaType, title, _, year, err := h.services.TMDB.GetIMDBInfo(imdbID)
-	return mediaType, title, year, err
+func (h *Handler) getMediaInfo(imdbID string) (string, string, int, string, error) {
+	mediaType, title, _, year, originalLanguage, err := h.services.TMDB.GetIMDBInfo(imdbID)
+	return mediaType, title, year, originalLanguage, err
 }
 
-func (h *Handler) searchStreams(mediaType, title string, year, season, episode int, apiKey, imdbID string, userConfig *config.Config) []models.Stream {
+func (h *Handler) searchStreams(mediaType, title string, year, season, episode int, apiKey, imdbID string, userConfig *config.Config, originalLanguage string) []models.Stream {
 	if mediaType == "movie" {
-		return h.searchMovieStreams(title, year, apiKey, userConfig)
+		return h.searchMovieStreams(title, year, apiKey, userConfig, originalLanguage)
 	} else if mediaType == "series" {
-		return h.searchSeriesStreams(title, season, episode, apiKey, imdbID, userConfig)
+		return h.searchSeriesStreams(title, season, episode, apiKey, imdbID, userConfig, originalLanguage)
 	}
 	return []models.Stream{}
 }
 
-func (h *Handler) searchMovieStreams(title string, year int, apiKey string, userConfig *config.Config) []models.Stream {
+func (h *Handler) searchMovieStreams(title string, year int, apiKey string, userConfig *config.Config, originalLanguage string) []models.Stream {
 	params := SearchParams{
 		Query:     title,
 		MediaType: "movie",
 		Year:      year,
 	}
-	results := h.performParallelSearch(params)
+	results := h.performLanguageBasedSearch(params, originalLanguage)
 
 	h.services.Logger.Infof("[StreamHandler] search results - movies: %d, starting AllDebrid processing", len(results.MovieTorrents))
 
@@ -172,7 +172,7 @@ func (h *Handler) searchMovieStreams(title string, year int, apiKey string, user
 }
 
 // Two-phase search: season packs first, then specific episodes
-func (h *Handler) searchSeriesStreams(title string, season, episode int, apiKey, imdbID string, userConfig *config.Config) []models.Stream {
+func (h *Handler) searchSeriesStreams(title string, season, episode int, apiKey, imdbID string, userConfig *config.Config, originalLanguage string) []models.Stream {
 	h.services.Logger.Infof("[StreamHandler] starting first search prioritizing complete seasons for s%02d", season)
 
 	params := SearchParams{
@@ -182,7 +182,7 @@ func (h *Handler) searchSeriesStreams(title string, season, episode int, apiKey,
 		Episode:   episode,
 		IMDBID:    imdbID,
 	}
-	results := h.performParallelSearch(params)
+	results := h.performLanguageBasedSearch(params, originalLanguage)
 	streams := h.processResults(results, apiKey, userConfig, 0, season, episode)
 
 	if len(streams) > 0 {
@@ -193,7 +193,7 @@ func (h *Handler) searchSeriesStreams(title string, season, episode int, apiKey,
 		h.services.Logger.Infof("[StreamHandler] no working streams from season search, trying episode-specific search for s%02de%02d", season, episode)
 
 		params.EpisodeOnly = true
-		episodeResults := h.performParallelSearch(params)
+		episodeResults := h.performLanguageBasedSearch(params, originalLanguage)
 		streams = h.processResults(episodeResults, apiKey, userConfig, 0, season, episode)
 
 		if len(streams) == 0 {
@@ -203,7 +203,7 @@ func (h *Handler) searchSeriesStreams(title string, season, episode int, apiKey,
 				Query:     title,
 				MediaType: "series",
 			}
-			broadResults := h.performParallelSearch(broadParams)
+			broadResults := h.performLanguageBasedSearch(broadParams, originalLanguage)
 			if broadResults != nil && len(broadResults.EpisodeTorrents) > 0 {
 				streams = h.processResults(broadResults, apiKey, userConfig, 0, season, episode)
 			}
@@ -211,6 +211,86 @@ func (h *Handler) searchSeriesStreams(title string, season, episode int, apiKey,
 	}
 
 	return streams
+}
+
+func (h *Handler) performLanguageBasedSearch(params SearchParams, originalLanguage string) *models.CombinedTorrentResults {
+	// Route to YGG if original language is French, otherwise to Apibay
+	if originalLanguage == "fr" {
+		h.services.Logger.Infof("[StreamHandler] original language is French, routing to YGG only")
+		return h.performYGGSearch(params)
+	} else {
+		h.services.Logger.Infof("[StreamHandler] original language is %s, routing to Apibay only", originalLanguage)
+		return h.performApibaySearch(params)
+	}
+}
+
+func (h *Handler) performYGGSearch(params SearchParams) *models.CombinedTorrentResults {
+	combinedResults := models.CombinedTorrentResults{}
+	
+	var results *models.TorrentResults
+	var err error
+
+	if params.EpisodeOnly {
+		h.services.Logger.Infof("[StreamHandler] YGG specific episode search - %s s%02de%02d", params.Query, params.Season, params.Episode)
+		results, err = h.services.YGG.SearchTorrentsSpecificEpisode(params.Query, params.MediaType, params.Season, params.Episode)
+	} else {
+		category := params.MediaType
+		if params.MediaType == "series" {
+			category = "series"
+		} else {
+			category = "movie"
+		}
+		h.services.Logger.Infof("[StreamHandler] YGG search - %s (%s)", params.Query, category)
+		results, err = h.services.YGG.SearchTorrents(params.Query, category, params.Season, params.Episode)
+	}
+
+	if err != nil {
+		h.services.Logger.Errorf("[StreamHandler] YGG search failed: %v", err)
+		return &combinedResults
+	}
+
+	if params.EpisodeOnly && results != nil {
+		combinedResults.EpisodeTorrents = append(combinedResults.EpisodeTorrents, results.EpisodeTorrents...)
+	} else {
+		var mu sync.Mutex
+		aggregateResults(results, &combinedResults, &mu)
+	}
+
+	return &combinedResults
+}
+
+func (h *Handler) performApibaySearch(params SearchParams) *models.CombinedTorrentResults {
+	combinedResults := models.CombinedTorrentResults{}
+	
+	query := params.Query
+	if params.MediaType == "movie" && params.Year > 0 {
+		query = fmt.Sprintf("%s %d", params.Query, params.Year)
+	}
+
+	var results *models.TorrentResults
+	var err error
+
+	if params.EpisodeOnly {
+		h.services.Logger.Infof("[StreamHandler] Apibay specific episode search - %s s%02de%02d", query, params.Season, params.Episode)
+		results, err = h.services.Apibay.SearchTorrentsSpecificEpisode(query, params.MediaType, params.Season, params.Episode)
+	} else {
+		h.services.Logger.Infof("[StreamHandler] Apibay search - %s (%s)", query, params.MediaType)
+		results, err = h.services.Apibay.SearchTorrents(query, params.MediaType, params.Season, params.Episode)
+	}
+
+	if err != nil {
+		h.services.Logger.Errorf("[StreamHandler] Apibay search failed: %v", err)
+		return &combinedResults
+	}
+
+	if params.EpisodeOnly && results != nil {
+		combinedResults.EpisodeTorrents = append(combinedResults.EpisodeTorrents, results.EpisodeTorrents...)
+	} else {
+		var mu sync.Mutex
+		aggregateResults(results, &combinedResults, &mu)
+	}
+
+	return &combinedResults
 }
 
 func (h *Handler) performParallelSearch(params SearchParams) *models.CombinedTorrentResults {

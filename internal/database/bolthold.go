@@ -11,11 +11,12 @@ import (
 
 // TMDBCache represents cached TMDB data
 type TMDBCache struct {
-	IMDBId    string
-	Type      string
-	Title     string
-	Year      int
-	CreatedAt time.Time
+	IMDBId           string
+	Type             string
+	Title            string
+	Year             int
+	OriginalLanguage string
+	CreatedAt        time.Time
 }
 
 // Magnet represents a magnet link
@@ -41,11 +42,12 @@ type BoltDB struct {
 }
 
 type BoltTMDBCache struct {
-	IMDBId    string `boltholdKey:"IMDBId"`
-	Type      string
-	Title     string
-	Year      int
-	CreatedAt time.Time
+	IMDBId           string `boltholdKey:"IMDBId"`
+	Type             string
+	Title            string
+	Year             int
+	OriginalLanguage string
+	CreatedAt        time.Time
 }
 
 type BoltMagnet struct {
@@ -89,21 +91,23 @@ func (db *BoltDB) GetCachedTMDB(imdbId string) (*TMDBCache, error) {
 
 	// Convert BoltTMDBCache to TMDBCache for compatibility
 	return &TMDBCache{
-		IMDBId:    cache.IMDBId,
-		Type:      cache.Type,
-		Title:     cache.Title,
-		Year:      cache.Year,
-		CreatedAt: cache.CreatedAt,
+		IMDBId:           cache.IMDBId,
+		Type:             cache.Type,
+		Title:            cache.Title,
+		Year:             cache.Year,
+		OriginalLanguage: cache.OriginalLanguage,
+		CreatedAt:        cache.CreatedAt,
 	}, nil
 }
 
 func (db *BoltDB) StoreTMDBCache(cache *TMDBCache) error {
 	boltCache := &BoltTMDBCache{
-		IMDBId:    cache.IMDBId,
-		Type:      cache.Type,
-		Title:     cache.Title,
-		Year:      cache.Year,
-		CreatedAt: time.Now(),
+		IMDBId:           cache.IMDBId,
+		Type:             cache.Type,
+		Title:            cache.Title,
+		Year:             cache.Year,
+		OriginalLanguage: cache.OriginalLanguage,
+		CreatedAt:        time.Now(),
 	}
 
 	err := db.store.Upsert(cache.IMDBId, boltCache)

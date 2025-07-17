@@ -2,9 +2,10 @@
 package models
 
 type TMDBData struct {
-	Type  string `json:"type"`
-	Title string `json:"title"`
-	Year  int    `json:"year"`
+	Type             string `json:"type"`
+	Title            string `json:"title"`
+	Year             int    `json:"year"`
+	OriginalLanguage string `json:"original_language"`
 }
 
 type TMDBFindResponse struct {
@@ -13,31 +14,33 @@ type TMDBFindResponse struct {
 }
 
 type TMDBMovie struct {
-	ID            int     `json:"id"`
-	Title         string  `json:"title"`
-	OriginalTitle string  `json:"original_title"`
-	Overview      string  `json:"overview"`
-	PosterPath    string  `json:"poster_path"`
-	BackdropPath  string  `json:"backdrop_path"`
-	ReleaseDate   string  `json:"release_date"`
-	VoteAverage   float64 `json:"vote_average"`
-	VoteCount     int     `json:"vote_count"`
-	GenreIDs      []int   `json:"genre_ids"`
-	Popularity    float64 `json:"popularity"`
+	ID               int     `json:"id"`
+	Title            string  `json:"title"`
+	OriginalTitle    string  `json:"original_title"`
+	OriginalLanguage string  `json:"original_language"`
+	Overview         string  `json:"overview"`
+	PosterPath       string  `json:"poster_path"`
+	BackdropPath     string  `json:"backdrop_path"`
+	ReleaseDate      string  `json:"release_date"`
+	VoteAverage      float64 `json:"vote_average"`
+	VoteCount        int     `json:"vote_count"`
+	GenreIDs         []int   `json:"genre_ids"`
+	Popularity       float64 `json:"popularity"`
 }
 
 type TMDBTV struct {
-	ID           int     `json:"id"`
-	Name         string  `json:"name"`
-	OriginalName string  `json:"original_name"`
-	Overview     string  `json:"overview"`
-	PosterPath   string  `json:"poster_path"`
-	BackdropPath string  `json:"backdrop_path"`
-	FirstAirDate string  `json:"first_air_date"`
-	VoteAverage  float64 `json:"vote_average"`
-	VoteCount    int     `json:"vote_count"`
-	GenreIDs     []int   `json:"genre_ids"`
-	Popularity   float64 `json:"popularity"`
+	ID               int     `json:"id"`
+	Name             string  `json:"name"`
+	OriginalName     string  `json:"original_name"`
+	OriginalLanguage string  `json:"original_language"`
+	Overview         string  `json:"overview"`
+	PosterPath       string  `json:"poster_path"`
+	BackdropPath     string  `json:"backdrop_path"`
+	FirstAirDate     string  `json:"first_air_date"`
+	VoteAverage      float64 `json:"vote_average"`
+	VoteCount        int     `json:"vote_count"`
+	GenreIDs         []int   `json:"genre_ids"`
+	Popularity       float64 `json:"popularity"`
 }
 
 type TMDBMovieResponse struct {

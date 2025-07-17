@@ -61,34 +61,35 @@ func (t *TMDB) SetAPIKey(apiKey string) {
 	t.apiKey = sanitizedKey
 }
 
-func (t *TMDB) GetIMDBInfo(imdbID string) (string, string, string, int, error) {
+func (t *TMDB) GetIMDBInfo(imdbID string) (string, string, string, int, string, error) {
 	cacheKey := fmt.Sprintf("tmdb:%s", imdbID)
 
 	if data, found := t.cache.Get(cacheKey); found {
 		tmdbData := data.(*models.TMDBData)
-		return tmdbData.Type, tmdbData.Title, tmdbData.Title, tmdbData.Year, nil
+		return tmdbData.Type, tmdbData.Title, tmdbData.Title, tmdbData.Year, tmdbData.OriginalLanguage, nil
 	}
 
 	if t.db != nil {
 		if cached, err := t.db.GetCachedTMDB(imdbID); err == nil && cached != nil {
 			tmdbData := &models.TMDBData{
-				Type:  cached.Type,
-				Title: cached.Title,
-				Year:  cached.Year,
+				Type:             cached.Type,
+				Title:            cached.Title,
+				Year:             cached.Year,
+				OriginalLanguage: cached.OriginalLanguage,
 			}
 			t.cache.Set(cacheKey, tmdbData)
-			return cached.Type, cached.Title, cached.Title, cached.Year, nil
+			return cached.Type, cached.Title, cached.Title, cached.Year, cached.OriginalLanguage, nil
 		}
 	}
 
 	// Validate API key before making request
 	if t.apiKey == "" {
-		return "", "", "", 0, fmt.Errorf("TMDB API key not configured")
+		return "", "", "", 0, "", fmt.Errorf("TMDB API key not configured")
 	}
 
 	if !t.validator.IsValidTMDBKey(t.apiKey) {
 		t.logger.Errorf("[TMDB] failed to make API request: invalid API key format (key: %s)", t.validator.MaskAPIKey(t.apiKey))
-		return "", "", "", 0, fmt.Errorf("invalid TMDB API key format")
+		return "", "", "", 0, "", fmt.Errorf("invalid TMDB API key format")
 	}
 
 	t.rateLimiter.Wait()
@@ -102,25 +103,26 @@ func (t *TMDB) GetIMDBInfo(imdbID string) (string, string, string, int, error) {
 
 	resp, err := t.httpClient.Get(url)
 	if err != nil {
-		return "", "", "", 0, fmt.Errorf("failed to fetch TMDB data: %w", err)
+		return "", "", "", 0, "", fmt.Errorf("failed to fetch TMDB data: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", "", "", 0, fmt.Errorf("TMDB API error: status %d", resp.StatusCode)
+		return "", "", "", 0, "", fmt.Errorf("TMDB API error: status %d", resp.StatusCode)
 	}
 
 	var tmdbResp models.TMDBFindResponse
 	if err := json.NewDecoder(resp.Body).Decode(&tmdbResp); err != nil {
-		return "", "", "", 0, fmt.Errorf("failed to decode TMDB response: %w", err)
+		return "", "", "", 0, "", fmt.Errorf("failed to decode TMDB response: %w", err)
 	}
 
-	var mediaType, title string
+	var mediaType, title, originalLanguage string
 	var year int
 
 	if len(tmdbResp.MovieResults) > 0 {
 		mediaType = "movie"
 		title = tmdbResp.MovieResults[0].OriginalTitle
+		originalLanguage = tmdbResp.MovieResults[0].OriginalLanguage
 		// Extract year from release date (format: "2024-01-15")
 		if tmdbResp.MovieResults[0].ReleaseDate != "" && len(tmdbResp.MovieResults[0].ReleaseDate) >= 4 {
 			if parsedYear, err := strconv.Atoi(tmdbResp.MovieResults[0].ReleaseDate[:4]); err == nil {
@@ -130,6 +132,7 @@ func (t *TMDB) GetIMDBInfo(imdbID string) (string, string, string, int, error) {
 	} else if len(tmdbResp.TVResults) > 0 {
 		mediaType = "series"
 		title = tmdbResp.TVResults[0].OriginalName
+		originalLanguage = tmdbResp.TVResults[0].OriginalLanguage
 		// Extract year from first air date (format: "2024-01-15")
 		if tmdbResp.TVResults[0].FirstAirDate != "" && len(tmdbResp.TVResults[0].FirstAirDate) >= 4 {
 			if parsedYear, err := strconv.Atoi(tmdbResp.TVResults[0].FirstAirDate[:4]); err == nil {
@@ -137,29 +140,31 @@ func (t *TMDB) GetIMDBInfo(imdbID string) (string, string, string, int, error) {
 			}
 		}
 	} else {
-		return "", "", "", 0, fmt.Errorf("no results found for IMDB ID: %s", imdbID)
+		return "", "", "", 0, "", fmt.Errorf("no results found for IMDB ID: %s", imdbID)
 	}
 
 	tmdbData := &models.TMDBData{
-		Type:  mediaType,
-		Title: title,
-		Year:  year,
+		Type:             mediaType,
+		Title:            title,
+		Year:             year,
+		OriginalLanguage: originalLanguage,
 	}
 	t.cache.Set(cacheKey, tmdbData)
 
 	if t.db != nil {
 		dbCache := &database.TMDBCache{
-			IMDBId: imdbID,
-			Type:   mediaType,
-			Title:  title,
-			Year:   year,
+			IMDBId:           imdbID,
+			Type:             mediaType,
+			Title:            title,
+			Year:             year,
+			OriginalLanguage: originalLanguage,
 		}
 		if err := t.db.StoreTMDBCache(dbCache); err != nil {
 			t.logger.Errorf("[TMDB] failed to store cache: %v", err)
 		}
 	}
 
-	return mediaType, title, title, year, nil
+	return mediaType, title, title, year, originalLanguage, nil
 }
 
 // GetPopularMovies fetches popular movies from TMDB

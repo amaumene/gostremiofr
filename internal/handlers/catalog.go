@@ -166,7 +166,7 @@ func (h *Handler) handleMeta(c *gin.Context) {
 	// For IMDB IDs, we need to find the TMDB ID first
 	if strings.HasPrefix(metaID, "tt") {
 		// Get basic info to find TMDB ID
-		mediaType, title, _, _, err := h.services.TMDB.GetIMDBInfo(metaID)
+		mediaType, title, _, _, _, err := h.services.TMDB.GetIMDBInfo(metaID)
 		if err != nil {
 			h.services.Logger.Errorf("[MetaHandler] failed to fetch IMDB info: %v", err)
 			c.JSON(http.StatusNotFound, gin.H{"error": "Meta not found"})

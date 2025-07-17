@@ -20,7 +20,7 @@ type Container struct {
 }
 
 type TMDBService interface {
-	GetIMDBInfo(imdbID string) (string, string, string, int, error)
+	GetIMDBInfo(imdbID string) (string, string, string, int, string, error)
 	GetPopularMovies(page int, genreID string) ([]models.Meta, error)
 	GetPopularSeries(page int, genreID string) ([]models.Meta, error)
 	GetTrending(mediaType string, timeWindow string, page int) ([]models.Meta, error)
