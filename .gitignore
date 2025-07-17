@@ -4,6 +4,7 @@
 *.dll
 *.so
 *.dylib
+gostremiofr
 
 # Test binary, built with `go test -c`
 *.test

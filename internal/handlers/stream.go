@@ -615,17 +615,37 @@ func findLargestFile(links []interface{}) (map[string]interface{}, bool) {
 }
 
 func (h *Handler) findEpisodeFile(links []interface{}, targetSeason, targetEpisode int) (map[string]interface{}, bool) {
+	var matchingFiles []map[string]interface{}
+	
 	for _, link := range links {
 		if linkObj, ok := link.(map[string]interface{}); ok {
 			if filename, ok := linkObj["filename"].(string); ok {
 				season, episode := h.parseEpisodeFromFilename(filename)
 				if season == targetSeason && episode == targetEpisode {
-					return linkObj, true
+					matchingFiles = append(matchingFiles, linkObj)
 				}
 			}
 		}
 	}
-	return nil, false
+	
+	if len(matchingFiles) == 0 {
+		return nil, false
+	}
+	
+	// Find the largest file among matches
+	var largestFile map[string]interface{}
+	var largestSize float64
+	
+	for _, file := range matchingFiles {
+		if size, ok := file["size"].(float64); ok {
+			if size > largestSize {
+				largestSize = size
+				largestFile = file
+			}
+		}
+	}
+	
+	return largestFile, largestFile != nil
 }
 
 func (h *Handler) createStreamFromFile(file map[string]interface{}, torrent models.TorrentInfo, apiKey string) *models.Stream {
