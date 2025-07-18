@@ -71,6 +71,7 @@ type TMDBMovieDetails struct {
 	IMDBId              string              `json:"imdb_id"`
 	Title               string              `json:"title"`
 	OriginalTitle       string              `json:"original_title"`
+	OriginalLanguage    string              `json:"original_language"`
 	Overview            string              `json:"overview"`
 	PosterPath          string              `json:"poster_path"`
 	BackdropPath        string              `json:"backdrop_path"`

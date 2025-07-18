@@ -10,6 +10,7 @@ type Manifest struct {
 	Resources     []string      `json:"resources"`
 	Catalogs      []Catalog     `json:"catalogs"`
 	BehaviorHints BehaviorHints `json:"behaviorHints"`
+	IDPrefixes    []string      `json:"idPrefixes,omitempty"`
 }
 
 type BehaviorHints struct {

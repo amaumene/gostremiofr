@@ -22,6 +22,7 @@ func (h *Handler) handleManifest(c *gin.Context) {
 		BehaviorHints: models.BehaviorHints{
 			Configurable: true,
 		},
+		IDPrefixes: []string{"tt", "tmdb:"},
 	}
 
 	c.JSON(http.StatusOK, manifest)
@@ -46,6 +47,7 @@ func (h *Handler) handleManifestWithConfig(c *gin.Context) {
 		BehaviorHints: models.BehaviorHints{
 			Configurable: true,
 		},
+		IDPrefixes: []string{"tt", "tmdb:"},
 	}
 
 	c.JSON(http.StatusOK, manifest)

@@ -22,8 +22,10 @@ import (
 )
 
 var (
-	imdbIDRegex  = regexp.MustCompile(`^tt\d+$`)
-	episodeRegex = regexp.MustCompile(`^tt\d+:(\d+):(\d+)$`)
+	imdbIDRegex      = regexp.MustCompile(`^tt\d+$`)
+	episodeRegex     = regexp.MustCompile(`^tt\d+:(\d+):(\d+)$`)
+	tmdbIDRegex      = regexp.MustCompile(`^tmdb:\d+$`)
+	tmdbEpisodeRegex = regexp.MustCompile(`^tmdb:(\d+):(\d+):(\d+)$`)
 )
 
 type SearchParams struct {
@@ -32,7 +34,7 @@ type SearchParams struct {
 	Season      int
 	Episode     int
 	Year        int
-	IMDBID      string
+	ID          string
 	EpisodeOnly bool
 }
 
@@ -59,8 +61,8 @@ func (h *Handler) handleStream(c *gin.Context) {
 
 	h.configureTMDBService(userConfig)
 
-	imdbID, season, episode := parseStreamID(c.Param("id"))
-	if imdbID == "" {
+	id, season, episode := parseStreamID(c.Param("id"))
+	if id == "" {
 		err := errors.NewInvalidIDError(c.Param("id"))
 		h.services.Logger.Errorf("[StreamHandler] %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -70,17 +72,19 @@ func (h *Handler) handleStream(c *gin.Context) {
 	userConfigStruct := config.CreateFromUserData(userConfig, h.config)
 	h.configureTorrentServices(userConfigStruct)
 
-	mediaType, title, year, originalLanguage, err := h.getMediaInfo(imdbID)
+	// Get media type from URL path for TMDB IDs
+	urlMediaType := c.Param("type")
+	mediaType, title, year, originalLanguage, err := h.getMediaInfo(id, urlMediaType)
 	if err != nil {
-		tmdbErr := errors.NewTMDBError(fmt.Sprintf("failed to get info for %s", imdbID), err)
+		tmdbErr := errors.NewTMDBError(fmt.Sprintf("failed to get info for %s", id), err)
 		h.services.Logger.Errorf("[StreamHandler] %v", tmdbErr)
 		c.JSON(http.StatusOK, models.StreamResponse{Streams: []models.Stream{}})
 		return
 	}
 
-	h.services.Logger.Infof("[StreamHandler] processing %s request - %s (%s)", mediaType, title, imdbID)
+	h.services.Logger.Infof("[StreamHandler] processing %s request - %s (%s)", mediaType, title, id)
 
-	streams := h.searchStreams(mediaType, title, year, season, episode, apiKey, imdbID, userConfigStruct, originalLanguage)
+	streams := h.searchStreams(mediaType, title, year, season, episode, apiKey, id, userConfigStruct, originalLanguage)
 	c.JSON(http.StatusOK, models.StreamResponse{Streams: streams})
 }
 
@@ -144,16 +148,31 @@ func (h *Handler) configureTorrentServices(userConfig *config.Config) {
 	}
 }
 
-func (h *Handler) getMediaInfo(imdbID string) (string, string, int, string, error) {
-	mediaType, title, _, year, originalLanguage, err := h.services.TMDB.GetIMDBInfo(imdbID)
+func (h *Handler) getMediaInfo(id, urlMediaType string) (string, string, int, string, error) {
+	if strings.HasPrefix(id, "tmdb:") {
+		return h.getTMDBInfo(id, urlMediaType)
+	} else {
+		mediaType, title, _, year, originalLanguage, err := h.services.TMDB.GetIMDBInfo(id)
+		return mediaType, title, year, originalLanguage, err
+	}
+}
+
+func (h *Handler) getTMDBInfo(tmdbID, urlMediaType string) (string, string, int, string, error) {
+	// Convert URL media type to TMDB format
+	tmdbMediaType := urlMediaType
+	if urlMediaType == "series" {
+		tmdbMediaType = "tv"
+	}
+	
+	mediaType, title, _, year, originalLanguage, err := h.services.TMDB.GetTMDBInfoWithType(tmdbID, tmdbMediaType)
 	return mediaType, title, year, originalLanguage, err
 }
 
-func (h *Handler) searchStreams(mediaType, title string, year, season, episode int, apiKey, imdbID string, userConfig *config.Config, originalLanguage string) []models.Stream {
+func (h *Handler) searchStreams(mediaType, title string, year, season, episode int, apiKey, id string, userConfig *config.Config, originalLanguage string) []models.Stream {
 	if mediaType == "movie" {
 		return h.searchMovieStreams(title, year, apiKey, userConfig, originalLanguage)
 	} else if mediaType == "series" {
-		return h.searchSeriesStreams(title, season, episode, apiKey, imdbID, userConfig, originalLanguage)
+		return h.searchSeriesStreams(title, season, episode, apiKey, id, userConfig, originalLanguage)
 	}
 	return []models.Stream{}
 }
@@ -172,7 +191,7 @@ func (h *Handler) searchMovieStreams(title string, year int, apiKey string, user
 }
 
 // Two-phase search: season packs first, then specific episodes
-func (h *Handler) searchSeriesStreams(title string, season, episode int, apiKey, imdbID string, userConfig *config.Config, originalLanguage string) []models.Stream {
+func (h *Handler) searchSeriesStreams(title string, season, episode int, apiKey, id string, userConfig *config.Config, originalLanguage string) []models.Stream {
 	h.services.Logger.Infof("[StreamHandler] starting first search prioritizing complete seasons for s%02d", season)
 
 	params := SearchParams{
@@ -180,7 +199,7 @@ func (h *Handler) searchSeriesStreams(title string, season, episode int, apiKey,
 		MediaType: "series",
 		Season:    season,
 		Episode:   episode,
-		IMDBID:    imdbID,
+		ID:        id,
 	}
 	results := h.performLanguageBasedSearch(params, originalLanguage)
 	streams := h.processResults(results, apiKey, userConfig, 0, season, episode)
@@ -614,6 +633,7 @@ func parseFileInfo(linkObj map[string]interface{}) string {
 func parseStreamID(id string) (string, int, int) {
 	id = strings.TrimSuffix(id, ".json")
 
+	// Handle IMDB episode format: tt123456:1:1
 	if episodeRegex.MatchString(id) {
 		matches := episodeRegex.FindStringSubmatch(id)
 		if len(matches) == 3 {
@@ -624,7 +644,24 @@ func parseStreamID(id string) (string, int, int) {
 		}
 	}
 
+	// Handle TMDB episode format: tmdb:123456:1:1
+	if tmdbEpisodeRegex.MatchString(id) {
+		matches := tmdbEpisodeRegex.FindStringSubmatch(id)
+		if len(matches) == 4 {
+			tmdbID := fmt.Sprintf("tmdb:%s", matches[1])
+			season, _ := strconv.Atoi(matches[2])
+			episode, _ := strconv.Atoi(matches[3])
+			return tmdbID, season, episode
+		}
+	}
+
+	// Handle IMDB movie format: tt123456
 	if imdbIDRegex.MatchString(id) {
+		return id, 0, 0
+	}
+
+	// Handle TMDB movie format: tmdb:123456
+	if tmdbIDRegex.MatchString(id) {
 		return id, 0, 0
 	}
 
