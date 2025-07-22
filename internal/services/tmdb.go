@@ -717,17 +717,90 @@ func (t *TMDB) convertTVToMetas(shows []models.TMDBTV) []models.Meta {
 	return metas
 }
 
+// fetchTVDetails fetches detailed TV show information from TMDB
+func (t *TMDB) fetchTVDetails(tmdbID int) (*models.TMDBTVDetails, error) {
+	cacheKey := fmt.Sprintf("tmdb:tv_details:%d", tmdbID)
+	if data, found := t.cache.Get(cacheKey); found {
+		details := data.(*models.TMDBTVDetails)
+		return details, nil
+	}
+
+	if err := t.validateAPIKey(); err != nil {
+		return nil, err
+	}
+
+	t.rateLimiter.Wait()
+	
+	url := fmt.Sprintf("https://api.themoviedb.org/3/tv/%d?api_key=%s&append_to_response=credits,external_ids",
+		tmdbID, t.apiKey)
+
+	resp, err := t.httpClient.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch TV details: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("TMDB API error: status %d", resp.StatusCode)
+	}
+
+	var details models.TMDBTVDetails
+	if err := json.NewDecoder(resp.Body).Decode(&details); err != nil {
+		return nil, fmt.Errorf("failed to decode TV details: %w", err)
+	}
+
+	t.cache.Set(cacheKey, &details)
+	return &details, nil
+}
+
 func (t *TMDB) convertTVToMeta(show models.TMDBTV) models.Meta {
-	// For catalog results, we'll create placeholder episodes
-	// Real episode data will be fetched when metadata is requested
+	// Fetch detailed TV show data to get real season/episode information
+	details, err := t.fetchTVDetails(show.ID)
+	if err != nil {
+		t.logger.Warnf("[TMDB] failed to fetch TV details for show %d: %v", show.ID, err)
+		// Fallback to basic info without episodes if details fetch fails
+		return models.Meta{
+			ID:          fmt.Sprintf("tmdb:%d", show.ID),
+			Type:        "series",
+			Name:        show.Name,
+			Poster:      t.buildImageURL(show.PosterPath, "w342"),
+			Background:  t.buildImageURL(show.BackdropPath, "w1280"),
+			Description: show.Overview,
+			ReleaseInfo: show.FirstAirDate,
+			IMDBRating:  show.VoteAverage,
+			Genres:      t.mapGenreIDs(show.GenreIDs, "tv"),
+			Videos:      []models.Video{},
+		}
+	}
+
+	// Generate videos (episodes) for the series
 	var videos []models.Video
-	// Create placeholder for first episode to indicate it's a series
-	videos = append(videos, models.Video{
-		ID:      fmt.Sprintf("tmdb:%d:1:1", show.ID),
-		Title:   "Episode 1",
-		Season:  1,
-		Episode: 1,
-	})
+	for _, season := range details.Seasons {
+		// Skip special seasons (season 0)
+		if season.SeasonNumber == 0 {
+			continue
+		}
+
+		// Fetch episodes for this season
+		episodes, err := t.getSeasonEpisodes(details.ID, season.SeasonNumber)
+		if err != nil {
+			t.logger.Warnf("[TMDB] failed to fetch episodes for season %d of series %d: %v", season.SeasonNumber, details.ID, err)
+			continue
+		}
+
+		for _, episode := range episodes {
+			video := models.Video{
+				ID:        fmt.Sprintf("tmdb:%d:%d:%d", details.ID, episode.SeasonNumber, episode.EpisodeNumber),
+				Title:     episode.Name,
+				Season:    episode.SeasonNumber,
+				Episode:   episode.EpisodeNumber,
+				Released:  episode.AirDate,
+				Overview:  episode.Overview,
+				Thumbnail: t.buildImageURL(episode.StillPath, "w300"),
+			}
+			videos = append(videos, video)
+		}
+	}
 
 	return models.Meta{
 		ID:          fmt.Sprintf("tmdb:%d", show.ID),
