@@ -754,54 +754,8 @@ func (t *TMDB) fetchTVDetails(tmdbID int) (*models.TMDBTVDetails, error) {
 }
 
 func (t *TMDB) convertTVToMeta(show models.TMDBTV) models.Meta {
-	// Fetch detailed TV show data to get real season/episode information
-	details, err := t.fetchTVDetails(show.ID)
-	if err != nil {
-		t.logger.Warnf("[TMDB] failed to fetch TV details for show %d: %v", show.ID, err)
-		// Fallback to basic info without episodes if details fetch fails
-		return models.Meta{
-			ID:          fmt.Sprintf("tmdb:%d", show.ID),
-			Type:        "series",
-			Name:        show.Name,
-			Poster:      t.buildImageURL(show.PosterPath, "w342"),
-			Background:  t.buildImageURL(show.BackdropPath, "w1280"),
-			Description: show.Overview,
-			ReleaseInfo: show.FirstAirDate,
-			IMDBRating:  show.VoteAverage,
-			Genres:      t.mapGenreIDs(show.GenreIDs, "tv"),
-			Videos:      []models.Video{},
-		}
-	}
-
-	// Generate videos (episodes) for the series
-	var videos []models.Video
-	for _, season := range details.Seasons {
-		// Skip special seasons (season 0)
-		if season.SeasonNumber == 0 {
-			continue
-		}
-
-		// Fetch episodes for this season
-		episodes, err := t.getSeasonEpisodes(details.ID, season.SeasonNumber)
-		if err != nil {
-			t.logger.Warnf("[TMDB] failed to fetch episodes for season %d of series %d: %v", season.SeasonNumber, details.ID, err)
-			continue
-		}
-
-		for _, episode := range episodes {
-			video := models.Video{
-				ID:        fmt.Sprintf("tmdb:%d:%d:%d", details.ID, episode.SeasonNumber, episode.EpisodeNumber),
-				Title:     episode.Name,
-				Season:    episode.SeasonNumber,
-				Episode:   episode.EpisodeNumber,
-				Released:  episode.AirDate,
-				Overview:  episode.Overview,
-				Thumbnail: t.buildImageURL(episode.StillPath, "w300"),
-			}
-			videos = append(videos, video)
-		}
-	}
-
+	// For search results, return basic info without fetching all episodes
+	// This prevents the timeout issue when searching for TV shows
 	return models.Meta{
 		ID:          fmt.Sprintf("tmdb:%d", show.ID),
 		Type:        "series",
@@ -812,7 +766,7 @@ func (t *TMDB) convertTVToMeta(show models.TMDBTV) models.Meta {
 		ReleaseInfo: show.FirstAirDate,
 		IMDBRating:  show.VoteAverage,
 		Genres:      t.mapGenreIDs(show.GenreIDs, "tv"),
-		Videos:      videos,
+		Videos:      []models.Video{}, // Episodes will be fetched when the specific series is requested
 	}
 }
 
