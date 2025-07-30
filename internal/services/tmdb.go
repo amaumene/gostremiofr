@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/amaumene/gostremiofr/internal/cache"
@@ -833,30 +834,87 @@ func (t *TMDB) convertTVDetailsToMeta(details models.TMDBTVDetails) models.Meta 
 
 	// Generate videos (episodes) for the series
 	var videos []models.Video
+	
+	// Filter out special seasons and create a list of seasons to fetch
+	var seasonsToFetch []models.TMDBSeason
 	for _, season := range details.Seasons {
-		// Skip special seasons (season 0)
-		if season.SeasonNumber == 0 {
-			continue
+		if season.SeasonNumber > 0 {
+			seasonsToFetch = append(seasonsToFetch, season)
+		}
+	}
+
+	// For series with many seasons, only fetch recent seasons by default
+	if len(seasonsToFetch) > 20 {
+		t.logger.Infof("[TMDB] Series %d has %d seasons, fetching only recent seasons", details.ID, len(seasonsToFetch))
+		// Sort seasons by number and take the last 10 seasons
+		if len(seasonsToFetch) > 10 {
+			seasonsToFetch = seasonsToFetch[len(seasonsToFetch)-10:]
+		}
+	}
+
+	// For series with many seasons, fetch them concurrently in batches
+	const batchSize = 5 // Process 5 seasons at a time to avoid overwhelming the API
+	type seasonResult struct {
+		seasonNumber int
+		videos       []models.Video
+	}
+	resultsChan := make(chan seasonResult, len(seasonsToFetch))
+	var wg sync.WaitGroup
+
+	for i := 0; i < len(seasonsToFetch); i += batchSize {
+		end := i + batchSize
+		if end > len(seasonsToFetch) {
+			end = len(seasonsToFetch)
 		}
 
-		// Fetch episodes for this season
-		episodes, err := t.getSeasonEpisodes(details.ID, season.SeasonNumber)
-		if err != nil {
-			t.logger.Warnf("[TMDB] failed to fetch episodes for season %d of series %d: %v", season.SeasonNumber, details.ID, err)
-			continue
+		// Process batch of seasons concurrently
+		for j := i; j < end; j++ {
+			wg.Add(1)
+			go func(season models.TMDBSeason) {
+				defer wg.Done()
+				
+				episodes, err := t.getSeasonEpisodes(details.ID, season.SeasonNumber)
+				if err != nil {
+					t.logger.Warnf("[TMDB] failed to fetch episodes for season %d of series %d: %v", season.SeasonNumber, details.ID, err)
+					return
+				}
+
+				var seasonVideos []models.Video
+				for _, episode := range episodes {
+					video := models.Video{
+						ID:        fmt.Sprintf("%s:%d:%d", details.ExternalIds.IMDBId, episode.SeasonNumber, episode.EpisodeNumber),
+						Title:     episode.Name,
+						Season:    episode.SeasonNumber,
+						Episode:   episode.EpisodeNumber,
+						Released:  episode.AirDate,
+						Overview:  episode.Overview,
+						Thumbnail: t.buildImageURL(episode.StillPath, "w300"),
+					}
+					seasonVideos = append(seasonVideos, video)
+				}
+				resultsChan <- seasonResult{
+					seasonNumber: season.SeasonNumber,
+					videos:       seasonVideos,
+				}
+			}(seasonsToFetch[j])
 		}
 
-		for _, episode := range episodes {
-			video := models.Video{
-				ID:        fmt.Sprintf("%s:%d:%d", details.ExternalIds.IMDBId, episode.SeasonNumber, episode.EpisodeNumber),
-				Title:     episode.Name,
-				Season:    episode.SeasonNumber,
-				Episode:   episode.EpisodeNumber,
-				Released:  episode.AirDate,
-				Overview:  episode.Overview,
-				Thumbnail: t.buildImageURL(episode.StillPath, "w300"),
-			}
-			videos = append(videos, video)
+		// Wait for current batch to complete before starting next batch
+		wg.Wait()
+	}
+
+	close(resultsChan)
+
+	// Collect all videos from the channel and sort by season number
+	seasonMap := make(map[int][]models.Video)
+	for result := range resultsChan {
+		seasonMap[result.seasonNumber] = result.videos
+	}
+	
+	// Add videos in season order
+	for _, season := range seasonsToFetch {
+		if seasonVideos, ok := seasonMap[season.SeasonNumber]; ok {
+			videos = append(videos, seasonVideos...)
 		}
 	}
 
@@ -915,6 +973,35 @@ func (t *TMDB) getSeasonEpisodes(seriesID, seasonNumber int) ([]models.TMDBEpiso
 	return seasonDetails.Episodes, nil
 }
 
+// prefetchSeasons fetches multiple seasons concurrently with batching
+func (t *TMDB) prefetchSeasons(seriesID int, seasons []models.TMDBSeason) {
+	const batchSize = 10 // Increase batch size for prefetching
+	var wg sync.WaitGroup
+	
+	for i := 0; i < len(seasons); i += batchSize {
+		end := i + batchSize
+		if end > len(seasons) {
+			end = len(seasons)
+		}
+		
+		for j := i; j < end; j++ {
+			if seasons[j].SeasonNumber == 0 {
+				continue
+			}
+			
+			wg.Add(1)
+			go func(seasonNum int) {
+				defer wg.Done()
+				// Attempt to fetch but don't fail if individual season fails
+				_, _ = t.getSeasonEpisodes(seriesID, seasonNum)
+			}(seasons[j].SeasonNumber)
+		}
+		
+		// Wait for batch to complete
+		wg.Wait()
+	}
+}
+
 func (t *TMDB) buildImageURL(path, size string) string {
 	if path == "" {
 		return ""
@@ -926,4 +1013,28 @@ func (t *TMDB) mapGenreIDs(ids []int, mediaType string) []string {
 	// This is a simplified version - in production you'd cache genre mappings
 	// For now, return empty array - can be enhanced later
 	return []string{}
+}
+
+// GetSeasonVideos fetches episodes for a specific season and returns them as videos
+func (t *TMDB) GetSeasonVideos(imdbID string, seriesID int, seasonNumber int) ([]models.Video, error) {
+	episodes, err := t.getSeasonEpisodes(seriesID, seasonNumber)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch season %d: %w", seasonNumber, err)
+	}
+
+	var videos []models.Video
+	for _, episode := range episodes {
+		video := models.Video{
+			ID:        fmt.Sprintf("%s:%d:%d", imdbID, episode.SeasonNumber, episode.EpisodeNumber),
+			Title:     episode.Name,
+			Season:    episode.SeasonNumber,
+			Episode:   episode.EpisodeNumber,
+			Released:  episode.AirDate,
+			Overview:  episode.Overview,
+			Thumbnail: t.buildImageURL(episode.StillPath, "w300"),
+		}
+		videos = append(videos, video)
+	}
+
+	return videos, nil
 }

@@ -187,3 +187,47 @@ func (c *Client) GetMagnetFiles(apiKey, magnetID string) (*MagnetFilesResponse, 
 
 	return &result, nil
 }
+
+// DeleteMagnet deletes a magnet from AllDebrid
+func (c *Client) DeleteMagnet(apiKey string, magnetID string) error {
+	endpoint := fmt.Sprintf("%s/magnet/delete", c.baseURL)
+
+	params := url.Values{}
+	params.Set("agent", "stremio")
+	params.Set("apikey", apiKey)
+	params.Set("id", magnetID)
+
+	fullURL := fmt.Sprintf("%s?%s", endpoint, params.Encode())
+
+	resp, err := c.httpClient.Get(fullURL)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	var result struct {
+		Status string `json:"status"`
+		Error  *struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error,omitempty"`
+	}
+
+	if err := json.Unmarshal(body, &result); err != nil {
+		return fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if result.Status != "success" {
+		if result.Error != nil {
+			return fmt.Errorf("AllDebrid API error: %s - %s", result.Error.Code, result.Error.Message)
+		}
+		return fmt.Errorf("AllDebrid API error: %s", result.Status)
+	}
+
+	return nil
+}

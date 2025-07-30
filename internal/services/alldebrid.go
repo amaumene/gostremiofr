@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/amaumene/gostremiofr/internal/constants"
+	"github.com/amaumene/gostremiofr/internal/database"
 	"github.com/amaumene/gostremiofr/internal/models"
 	"github.com/amaumene/gostremiofr/pkg/alldebrid"
 	"github.com/amaumene/gostremiofr/pkg/httputil"
@@ -42,6 +43,7 @@ type AllDebrid struct {
 	logger      logger.Logger
 	validator   *security.APIKeyValidator
 	fileParsers *fileParsers
+	db          database.Database
 }
 
 // fileParsers handles parsing of file metadata
@@ -65,6 +67,11 @@ func NewAllDebrid(apiKey string) *AllDebrid {
 		validator:   validator,
 		fileParsers: newFileParsers(),
 	}
+}
+
+// SetDB sets the database instance
+func (a *AllDebrid) SetDB(db database.Database) {
+	a.db = db
 }
 
 // newFileParsers creates and compiles all regex patterns for file parsing
@@ -155,7 +162,27 @@ func (a *AllDebrid) UploadMagnet(hash, title, apiKey string) error {
 	}
 
 	// Check response status and errors
-	return a.checkAPIResponse(resp.Status, resp.Error, resp.Data.Magnets)
+	if err := a.checkAPIResponse(resp.Status, resp.Error, resp.Data.Magnets); err != nil {
+		return err
+	}
+
+	// Store magnet information in database for cleanup
+	if a.db != nil && len(resp.Data.Magnets) > 0 {
+		magnet := resp.Data.Magnets[0]
+		dbMagnet := &database.Magnet{
+			ID:            fmt.Sprintf("ad_%s_%d", hash, time.Now().Unix()),
+			Hash:          hash,
+			Name:          title,
+			AllDebridID:   fmt.Sprintf("%d", magnet.ID),
+			AllDebridKey:  apiKey,
+		}
+		if err := a.db.StoreMagnet(dbMagnet); err != nil {
+			a.logger.Warnf("[AllDebrid] failed to store magnet in database: %v", err)
+			// Don't fail the upload, just log the warning
+		}
+	}
+
+	return nil
 }
 
 func (a *AllDebrid) GetVideoFiles(magnetID, apiKey string) ([]models.VideoFile, error) {
@@ -212,6 +239,26 @@ func (a *AllDebrid) UnlockLink(link, apiKey string) (string, error) {
 	}
 
 	return resp.Data.Link, nil
+}
+
+// DeleteMagnet deletes a magnet from AllDebrid
+func (a *AllDebrid) DeleteMagnet(magnetID, apiKey string) error {
+	// Validate API key
+	apiKey, err := a.validateAndPrepareAPIKey(apiKey)
+	if err != nil {
+		return err
+	}
+
+	a.rateLimiter.Wait()
+
+	// Use our local client
+	err = a.client.DeleteMagnet(apiKey, magnetID)
+	if err != nil {
+		return fmt.Errorf("failed to delete magnet: %w", err)
+	}
+
+	a.logger.Infof("[AllDebrid] deleted magnet ID: %s", magnetID)
+	return nil
 }
 
 // Helper methods for API operations

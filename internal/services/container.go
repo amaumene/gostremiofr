@@ -17,6 +17,7 @@ type Container struct {
 	DB            database.Database
 	Logger        logger.Logger
 	TorrentSorter *TorrentSorter
+	Cleanup       *CleanupService
 }
 
 type TMDBService interface {

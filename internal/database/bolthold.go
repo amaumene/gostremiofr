@@ -21,10 +21,12 @@ type TMDBCache struct {
 
 // Magnet represents a magnet link
 type Magnet struct {
-	ID      string
-	Hash    string
-	Name    string
-	AddedAt time.Time
+	ID            string
+	Hash          string
+	Name          string
+	AddedAt       time.Time
+	AllDebridID   string // AllDebrid magnet ID for cleanup
+	AllDebridKey  string // API key used (for cleanup)
 }
 
 // Database interface for database operations
@@ -33,6 +35,7 @@ type Database interface {
 	StoreTMDBCache(cache *TMDBCache) error
 	StoreMagnet(magnet *Magnet) error
 	GetMagnets() ([]Magnet, error)
+	GetOldMagnets(olderThan time.Duration) ([]Magnet, error)
 	DeleteMagnet(id string) error
 	Close() error
 }
@@ -51,10 +54,12 @@ type BoltTMDBCache struct {
 }
 
 type BoltMagnet struct {
-	ID      string `boltholdKey:"ID"`
-	Hash    string `boltholdUnique:"Hash"`
-	Name    string
-	AddedAt time.Time
+	ID            string `boltholdKey:"ID"`
+	Hash          string `boltholdUnique:"Hash"`
+	Name          string
+	AddedAt       time.Time
+	AllDebridID   string // AllDebrid magnet ID for cleanup
+	AllDebridKey  string // API key used (for cleanup)
 }
 
 func NewBolt(dbPath string) (*BoltDB, error) {
@@ -120,10 +125,12 @@ func (db *BoltDB) StoreTMDBCache(cache *TMDBCache) error {
 
 func (db *BoltDB) StoreMagnet(magnet *Magnet) error {
 	boltMagnet := &BoltMagnet{
-		ID:      magnet.ID,
-		Hash:    magnet.Hash,
-		Name:    magnet.Name,
-		AddedAt: time.Now(),
+		ID:            magnet.ID,
+		Hash:          magnet.Hash,
+		Name:          magnet.Name,
+		AddedAt:       time.Now(),
+		AllDebridID:   magnet.AllDebridID,
+		AllDebridKey:  magnet.AllDebridKey,
 	}
 
 	err := db.store.Upsert(magnet.ID, boltMagnet)
@@ -145,10 +152,12 @@ func (db *BoltDB) GetMagnets() ([]Magnet, error) {
 	magnets := make([]Magnet, len(boltMagnets))
 	for i, bm := range boltMagnets {
 		magnets[i] = Magnet{
-			ID:      bm.ID,
-			Hash:    bm.Hash,
-			Name:    bm.Name,
-			AddedAt: bm.AddedAt,
+			ID:            bm.ID,
+			Hash:          bm.Hash,
+			Name:          bm.Name,
+			AddedAt:       bm.AddedAt,
+			AllDebridID:   bm.AllDebridID,
+			AllDebridKey:  bm.AllDebridKey,
 		}
 	}
 
@@ -165,4 +174,30 @@ func (db *BoltDB) DeleteMagnet(id string) error {
 	}
 
 	return nil
+}
+
+// GetOldMagnets returns magnets older than the specified duration
+func (db *BoltDB) GetOldMagnets(olderThan time.Duration) ([]Magnet, error) {
+	cutoffTime := time.Now().Add(-olderThan)
+	
+	var boltMagnets []BoltMagnet
+	err := db.store.Find(&boltMagnets, bolthold.Where("AddedAt").Lt(cutoffTime))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get old magnets: %w", err)
+	}
+
+	// Convert BoltMagnet to Magnet for compatibility
+	magnets := make([]Magnet, len(boltMagnets))
+	for i, bm := range boltMagnets {
+		magnets[i] = Magnet{
+			ID:            bm.ID,
+			Hash:          bm.Hash,
+			Name:          bm.Name,
+			AddedAt:       bm.AddedAt,
+			AllDebridID:   bm.AllDebridID,
+			AllDebridKey:  bm.AllDebridKey,
+		}
+	}
+
+	return magnets, nil
 }

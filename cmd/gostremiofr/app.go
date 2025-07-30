@@ -14,10 +14,11 @@ import (
 )
 
 var (
-	Logger          logger.Logger
-	DB              database.Database
-	tmdbMemoryCache *cache.LRUCache
-	handler         *handlers.Handler
+	Logger           logger.Logger
+	DB               database.Database
+	tmdbMemoryCache  *cache.LRUCache
+	handler          *handlers.Handler
+	serviceContainer *services.Container
 )
 
 func InitializeLogger() {
@@ -57,17 +58,21 @@ func InitializeDatabase() {
 }
 
 func InitializeServices() {
-	// Initialize cache
-	tmdbMemoryCache = cache.New(1000, 24*time.Hour)
+	// Initialize cache with larger capacity for better performance with large series
+	tmdbMemoryCache = cache.New(5000, 24*time.Hour)
 
 	// Initialize services
 	tmdbService := services.NewTMDB("", tmdbMemoryCache) // empty API key for now
 	yggService := services.NewYGG(DB, tmdbMemoryCache, tmdbService)
 	apibayService := services.NewApibay(DB, tmdbMemoryCache)
 	allDebridService := services.NewAllDebrid("") // empty API key for now
+	allDebridService.SetDB(DB) // Set database for cleanup tracking
+
+	// Initialize cleanup service
+	cleanupService := services.NewCleanupService(DB, allDebridService)
 
 	// Initialize services container
-	serviceContainer := &services.Container{
+	serviceContainer = &services.Container{
 		TMDB:          tmdbService,
 		AllDebrid:     allDebridService,
 		YGG:           yggService,
@@ -76,6 +81,7 @@ func InitializeServices() {
 		DB:            DB,
 		Logger:        logger.New(),
 		TorrentSorter: services.NewTorrentSorter(nil), // Will be updated with config later
+		Cleanup:       cleanupService,
 	}
 
 	// Initialize handler

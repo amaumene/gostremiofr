@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/amaumene/gostremiofr/internal/constants"
 	"github.com/amaumene/gostremiofr/pkg/ssl"
@@ -88,6 +89,22 @@ func main() {
 
 	// Start cache cleanup routine with proper context
 	tmdbMemoryCache.StartCleanup(ctx)
+
+	// Start AllDebrid cleanup service
+	if serviceContainer != nil && serviceContainer.Cleanup != nil {
+		// Configure retention period from environment
+		retentionHours := os.Getenv("ALLDEBRID_RETENTION_HOURS")
+		if retentionHours != "" {
+			if hours, err := time.ParseDuration(retentionHours + "h"); err == nil {
+				serviceContainer.Cleanup.SetRetentionPeriod(hours)
+				Logger.Infof("[App] AllDebrid retention period set to %v", hours)
+			}
+		}
+		
+		if err := serviceContainer.Cleanup.Start(ctx); err != nil {
+			Logger.Errorf("[App] failed to start cleanup service: %v", err)
+		}
+	}
 
 	// Register all routes through the handler
 	handler.RegisterRoutes(r)
