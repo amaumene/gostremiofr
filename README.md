@@ -295,40 +295,6 @@ Enable debug logging for detailed information:
 LOG_LEVEL=debug ./gostremiofr
 ```
 
-## Recent Improvements (v5.1)
-
-### Code Refactoring
-- **Helper Function Separation**: Extracted helper functions into dedicated `*_helpers.go` files for better code organization
-- **Improved Modularity**: Each service now has its main logic separated from utility functions
-- **Better Maintainability**: Cleaner separation of concerns makes the codebase easier to navigate and modify
-- **Consistent Structure**: All services follow the same pattern with main implementation and helper files
-
-## Previous Improvements (v5.0)
-
-### Major Updates
-- **Language Filter Removal**: Simplified torrent prioritization by removing language-based filtering
-- **Improved Torrent Sorting**: Fixed critical bug where low-quality Apibay torrents were processed before high-quality YGG season packs
-- **Size-based Tie-breaking**: Implemented proper size-based sorting as the secondary criteria after resolution
-- **Code Cleanup**: Removed unused functions, redundant comments, and legacy code (~300+ lines removed)
-- **Multi-threading Fixes**: Added HTTP connection pooling to prevent resource exhaustion
-
-### Performance Improvements
-- **Priority-based Processing**: Torrents are now properly sorted before sequential processing
-- **Connection Pooling**: HTTP clients now use connection pooling (10 max idle, 2 per host)
-- **Reduced Memory Usage**: Cleaned up unused code and optimized data structures
-- **Better Resource Management**: Fixed potential goroutine leaks and improved cleanup
-
-### Code Quality Enhancements
-- **Simplified Logic**: Removed complex language filtering logic for cleaner, more maintainable code
-- **Better Error Handling**: Improved error context and reporting throughout the application
-- **Modular Architecture**: Continued refactoring toward cleaner separation of concerns
-- **KISS Principle**: Focused on keeping solutions simple and maintainable
-
-### Provider Improvements
-- **YGG Priority Fix**: YGG torrents (typically higher quality French content) now properly prioritized
-- **Size Sorting**: Larger torrents of the same resolution are now preferred
-- **Apibay Integration**: Maintained as fallback provider for international content
-
 ## Contributing
 
 Contributions are welcome! Please:
