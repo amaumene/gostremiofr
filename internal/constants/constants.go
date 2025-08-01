@@ -1,3 +1,4 @@
+// Package constants defines application-wide constants and default values.
 package constants
 
 const (
@@ -16,14 +17,13 @@ const (
 	DefaultCacheTTL  = 24 // hours
 
 	// Rate limiting
-	TMDBRateLimit      = 20
-	TMDBRateBurst      = 5
-	AllDebridRateLimit = 10
-	AllDebridRateBurst = 2
-
+	TMDBRateLimit      = 20 // requests per second
+	TMDBRateBurst      = 5  // burst capacity
+	AllDebridRateLimit = 10 // requests per second
+	AllDebridRateBurst = 2  // burst capacity
 )
 
-// TMDB Genre IDs for movies
+// TMDBMovieGenres contains TMDB genre IDs for movies.
 var TMDBMovieGenres = []string{
 	"28",    // Action
 	"12",    // Adventure
@@ -46,7 +46,7 @@ var TMDBMovieGenres = []string{
 	"37",    // Western
 }
 
-// TMDB Genre IDs for TV series
+// TMDBTVGenres contains TMDB genre IDs for TV series.
 var TMDBTVGenres = []string{
 	"10759", // Action & Adventure
 	"16",    // Animation
@@ -66,11 +66,10 @@ var TMDBTVGenres = []string{
 	"37",    // Western
 }
 
-// Supported resolutions in order of preference
+// DefaultResolutions lists supported resolutions in order of preference.
 var DefaultResolutions = []string{
 	"2160p",
 	"1080p",
 	"720p",
 	"480p",
 }
-

@@ -111,7 +111,7 @@ func (a *Apibay) performSearch(query string, mediaType string, season, episode i
 	searchQuery := a.buildSearchQueryWithMode(query, mediaType, season, episode, specificEpisode)
 	apiURL := a.buildAPIURL(searchQuery)
 
-	a.logger.Infof("[APIBAY] API call to search torrents - URL: %s", apiURL)
+	a.logger.Infof("API call to search torrents - URL: %s", apiURL)
 
 	// Fetch torrents from API
 	torrents, err := a.fetchTorrents(apiURL)
@@ -121,7 +121,7 @@ func (a *Apibay) performSearch(query string, mediaType string, season, episode i
 
 	// Add source and log sample torrents
 	a.processTorrentMetadata(torrents)
-	a.logger.Infof("[APIBAY] API call completed - found %d torrents for query: %s", len(torrents), query)
+	a.logger.Infof("API call completed - found %d torrents for query: %s", len(torrents), query)
 
 	// Process and cache results
 	results := a.processTorrents(torrents, mediaType, season, episode)
@@ -175,7 +175,7 @@ func (a *Apibay) processTorrentMetadata(torrents []ApibayTorrent) {
 		torrents[i].Source = "APIBAY"
 		// Log first few torrents for debugging
 		if i < apibayLogLimit {
-			a.logger.Infof("[APIBAY] torrent %d: %s (hash: %s, seeders: %s)",
+			a.logger.Infof("torrent %d: %s (hash: %s, seeders: %s)",
 				i+1, torrents[i].Name, torrents[i].InfoHash, torrents[i].Seeders)
 		}
 	}
@@ -224,10 +224,10 @@ func (a ApibayTorrentWrapper) GetTitle() string { return a.Name }
 func (a ApibayTorrentWrapper) GetHash() string {
 	return strings.ToLower(a.InfoHash)
 }
-func (a ApibayTorrentWrapper) GetSource() string   { return a.Source }
-func (a ApibayTorrentWrapper) GetType() string     { return "" }
-func (a ApibayTorrentWrapper) GetSeason() int      { return 0 }
-func (a ApibayTorrentWrapper) GetEpisode() int     { return 0 }
+func (a ApibayTorrentWrapper) GetSource() string { return a.Source }
+func (a ApibayTorrentWrapper) GetType() string   { return "" }
+func (a ApibayTorrentWrapper) GetSeason() int    { return 0 }
+func (a ApibayTorrentWrapper) GetEpisode() int   { return 0 }
 func (a ApibayTorrentWrapper) GetSize() int64 {
 	if size, err := strconv.ParseInt(a.Size, 10, 64); err == nil {
 		return size

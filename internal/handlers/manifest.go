@@ -1,8 +1,6 @@
 package handlers
 
 import (
-	"encoding/base64"
-	"encoding/json"
 	"net/http"
 
 	"github.com/amaumene/gostremiofr/internal/constants"
@@ -11,32 +9,17 @@ import (
 )
 
 func (h *Handler) handleManifest(c *gin.Context) {
-	manifest := models.Manifest{
-		ID:          constants.AddonID,
-		Version:     constants.AddonVersion,
-		Name:        constants.AddonName,
-		Description: constants.AddonDescription,
-		Types:       []string{"movie", "series"},
-		Resources:   []string{"catalog", "meta", "stream"},
-		Catalogs:    h.getDefaultCatalogs(),
-		BehaviorHints: models.BehaviorHints{
-			Configurable: true,
-		},
-		IDPrefixes: []string{"tt", "tmdb:"},
-	}
-
+	manifest := h.createManifest()
 	c.JSON(http.StatusOK, manifest)
 }
 
 func (h *Handler) handleManifestWithConfig(c *gin.Context) {
-	configuration := c.Param("configuration")
+	manifest := h.createManifest()
+	c.JSON(http.StatusOK, manifest)
+}
 
-	var config map[string]string
-	if data, err := base64.StdEncoding.DecodeString(configuration); err == nil {
-		json.Unmarshal(data, &config)
-	}
-
-	manifest := models.Manifest{
+func (h *Handler) createManifest() models.Manifest {
+	return models.Manifest{
 		ID:          constants.AddonID,
 		Version:     constants.AddonVersion,
 		Name:        constants.AddonName,
@@ -49,13 +32,17 @@ func (h *Handler) handleManifestWithConfig(c *gin.Context) {
 		},
 		IDPrefixes: []string{"tt", "tmdb:"},
 	}
-
-	c.JSON(http.StatusOK, manifest)
 }
 
 func (h *Handler) getDefaultCatalogs() []models.Catalog {
+	var catalogs []models.Catalog
+	catalogs = append(catalogs, h.getMovieCatalogs()...)
+	catalogs = append(catalogs, h.getSeriesCatalogs()...)
+	return catalogs
+}
+
+func (h *Handler) getMovieCatalogs() []models.Catalog {
 	return []models.Catalog{
-		// Movie catalogs
 		{
 			Type: "movie",
 			ID:   "popular",
@@ -85,7 +72,11 @@ func (h *Handler) getDefaultCatalogs() []models.Catalog {
 				{Name: "skip"},
 			},
 		},
-		// Series catalogs
+	}
+}
+
+func (h *Handler) getSeriesCatalogs() []models.Catalog {
+	return []models.Catalog{
 		{
 			Type: "series",
 			ID:   "popular",

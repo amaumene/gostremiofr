@@ -12,13 +12,11 @@ import (
 	"github.com/amaumene/gostremiofr/pkg/httputil"
 )
 
-// Client represents an AllDebrid API client
 type Client struct {
 	httpClient *http.Client
 	baseURL    string
 }
 
-// NewClient creates a new AllDebrid API client
 func NewClient() *Client {
 	return &Client{
 		httpClient: httputil.NewHTTPClient(30 * time.Second),
@@ -89,127 +87,109 @@ type MagnetFilesResponse struct {
 	} `json:"error,omitempty"`
 }
 
-// UploadMagnet uploads a magnet link to AllDebrid
 func (c *Client) UploadMagnet(apiKey string, magnetURLs []string) (*MagnetUploadResponse, error) {
 	endpoint := fmt.Sprintf("%s/magnet/upload", c.baseURL)
-
-	formData := url.Values{}
-	formData.Set("agent", "stremio")
-	formData.Set("apikey", apiKey)
-
-	// Add all magnet URLs
-	for _, magnetURL := range magnetURLs {
-		formData.Add("magnets[]", magnetURL)
-	}
+	formData := c.buildMagnetFormData(apiKey, magnetURLs)
 
 	req, err := http.NewRequest("POST", endpoint, strings.NewReader(formData.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
 
 	var result MagnetUploadResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+	if err := c.decodeResponse(resp, &result); err != nil {
+		return nil, err
 	}
-
 	return &result, nil
 }
 
-// UnlockLink unlocks a link to get direct download URL
+func (c *Client) buildMagnetFormData(apiKey string, magnetURLs []string) url.Values {
+	formData := url.Values{}
+	formData.Set("agent", "stremio")
+	formData.Set("apikey", apiKey)
+	for _, magnetURL := range magnetURLs {
+		formData.Add("magnets[]", magnetURL)
+	}
+	return formData
+}
+
+func (c *Client) buildParams(apiKey string, extraParams map[string]string) url.Values {
+	params := url.Values{}
+	params.Set("agent", "stremio")
+	params.Set("apikey", apiKey)
+	for key, value := range extraParams {
+		params.Set(key, value)
+	}
+	return params
+}
+
+func (c *Client) decodeResponse(resp *http.Response, result interface{}) error {
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if err := json.Unmarshal(body, result); err != nil {
+		return fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return nil
+}
+
 func (c *Client) UnlockLink(apiKey, link string) (*LinkUnlockResponse, error) {
 	endpoint := fmt.Sprintf("%s/link/unlock", c.baseURL)
-
-	params := url.Values{}
-	params.Set("agent", "stremio")
-	params.Set("apikey", apiKey)
-	params.Set("link", link)
-
+	params := c.buildParams(apiKey, map[string]string{"link": link})
 	fullURL := fmt.Sprintf("%s?%s", endpoint, params.Encode())
 
 	resp, err := c.httpClient.Get(fullURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
-
 	var result LinkUnlockResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+	if err := c.decodeResponse(resp, &result); err != nil {
+		return nil, err
 	}
-
 	return &result, nil
 }
 
-// GetMagnetFiles gets files for a magnet ID
 func (c *Client) GetMagnetFiles(apiKey, magnetID string) (*MagnetFilesResponse, error) {
 	endpoint := fmt.Sprintf("%s/magnet/files", c.baseURL)
-
-	params := url.Values{}
-	params.Set("agent", "stremio")
-	params.Set("apikey", apiKey)
-	params.Set("id", magnetID)
-
+	params := c.buildParams(apiKey, map[string]string{"id": magnetID})
 	fullURL := fmt.Sprintf("%s?%s", endpoint, params.Encode())
 
 	resp, err := c.httpClient.Get(fullURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
-
 	var result MagnetFilesResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+	if err := c.decodeResponse(resp, &result); err != nil {
+		return nil, err
 	}
-
 	return &result, nil
 }
 
-// DeleteMagnet deletes a magnet from AllDebrid
 func (c *Client) DeleteMagnet(apiKey string, magnetID string) error {
 	endpoint := fmt.Sprintf("%s/magnet/delete", c.baseURL)
-
-	params := url.Values{}
-	params.Set("agent", "stremio")
-	params.Set("apikey", apiKey)
-	params.Set("id", magnetID)
-
+	params := c.buildParams(apiKey, map[string]string{"id": magnetID})
 	fullURL := fmt.Sprintf("%s?%s", endpoint, params.Encode())
 
 	resp, err := c.httpClient.Get(fullURL)
 	if err != nil {
 		return fmt.Errorf("failed to send request: %w", err)
 	}
-	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to read response body: %w", err)
-	}
+	return c.validateDeleteResponse(resp)
+}
 
+func (c *Client) validateDeleteResponse(resp *http.Response) error {
 	var result struct {
 		Status string `json:"status"`
 		Error  *struct {
@@ -218,8 +198,8 @@ func (c *Client) DeleteMagnet(apiKey string, magnetID string) error {
 		} `json:"error,omitempty"`
 	}
 
-	if err := json.Unmarshal(body, &result); err != nil {
-		return fmt.Errorf("failed to decode response: %w", err)
+	if err := c.decodeResponse(resp, &result); err != nil {
+		return err
 	}
 
 	if result.Status != "success" {

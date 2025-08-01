@@ -128,19 +128,32 @@ gostremiofr/
 ├── internal/            # Internal packages
 │   ├── config/         # Configuration management
 │   ├── constants/      # Application constants
-│   ├── errors/         # Custom error types
-│   ├── handlers/       # HTTP request handlers
-│   ├── services/       # External service integrations
-│   ├── models/         # Data models (organized by domain)
-│   │   ├── stream_models.go      # Stremio stream responses
-│   │   ├── torrent_models.go     # Torrent processing models
-│   │   ├── tmdb_models.go        # TMDB API responses
-│   │   ├── alldebrid_models.go   # AllDebrid API responses
-│   │   └── stremio_models.go     # Stremio protocol models
+│   ├── database/       # Database operations
 │   ├── cache/          # Caching implementation
-│   └── database/       # Database operations
+│   ├── middleware/     # HTTP middleware (auth, CORS, etc.)
+│   ├── handlers/       # HTTP request handlers
+│   │   └── stream_helpers.go     # Stream parsing helper functions
+│   ├── services/       # External service integrations
+│   │   ├── alldebrid.go          # AllDebrid service implementation
+│   │   ├── alldebrid_helpers.go  # AllDebrid helper functions
+│   │   ├── tmdb.go               # TMDB service implementation
+│   │   ├── tmdb_helpers.go       # TMDB helper functions
+│   │   ├── ygg.go                # YGG torrent service
+│   │   ├── ygg_helpers.go        # YGG helper functions
+│   │   ├── apibay.go             # Apibay torrent service
+│   │   ├── torrent_service.go    # Base torrent service
+│   │   ├── torrent_service_helpers.go # Torrent service helpers
+│   │   ├── cleanup.go            # Cleanup service
+│   │   └── cleanup_helpers.go    # Cleanup helper functions
+│   └── models/         # Data models (organized by domain)
+│       ├── common.go             # Common models and interfaces
+│       ├── stream_models.go      # Stremio stream responses
+│       ├── torrent_models.go     # Torrent processing models
+│       ├── tmdb_models.go        # TMDB API responses
+│       └── stremio_models.go     # Stremio protocol models
 ├── pkg/                # Public packages
 │   ├── logger/         # Custom logging
+│   ├── httputil/       # HTTP utilities and client
 │   ├── security/       # Security utilities
 │   ├── ratelimiter/    # Rate limiting utilities
 │   ├── alldebrid/      # AllDebrid API client
@@ -151,12 +164,16 @@ gostremiofr/
 ### Key Components
 
 - **Handlers**: Process Stremio requests and coordinate services
+  - Stream handlers with dedicated helper functions for parsing
 - **Services**: 
   - `YGG`: Searches YGG torrent tracker (French content)
   - `Apibay`: Searches The Pirate Bay API (International content)
   - `TMDB`: Fetches movie/series metadata
   - `AllDebrid`: Manages torrent downloads and streaming
+  - `TorrentService`: Base service with common torrent processing logic
+  - Each service has accompanying `*_helpers.go` file for utility functions
 - **Cache**: LRU memory cache + BoltDB embedded database for persistence
+- **Middleware**: HTTP middleware for authentication, CORS, and request handling
 - **Security**: API key validation and sanitization
 
 ## Development
@@ -278,7 +295,15 @@ Enable debug logging for detailed information:
 LOG_LEVEL=debug ./gostremiofr
 ```
 
-## Recent Improvements (v5.0)
+## Recent Improvements (v5.1)
+
+### Code Refactoring
+- **Helper Function Separation**: Extracted helper functions into dedicated `*_helpers.go` files for better code organization
+- **Improved Modularity**: Each service now has its main logic separated from utility functions
+- **Better Maintainability**: Cleaner separation of concerns makes the codebase easier to navigate and modify
+- **Consistent Structure**: All services follow the same pattern with main implementation and helper files
+
+## Previous Improvements (v5.0)
 
 ### Major Updates
 - **Language Filter Removal**: Simplified torrent prioritization by removing language-based filtering

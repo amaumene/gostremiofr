@@ -1,3 +1,4 @@
+// Package ssl provides SSL/TLS certificate management for local development.
 package ssl
 
 import (
@@ -15,6 +16,27 @@ import (
 	"github.com/amaumene/gostremiofr/pkg/logger"
 )
 
+const (
+	// Certificate download URLs
+	certificateURL = "https://local-ip.sh/server.pem"
+	privateKeyURL  = "https://local-ip.sh/server.key"
+	
+	// File permissions
+	keyFileMode = 0600
+	dirMode     = 0755
+	
+	// Certificate validity period
+	certValidityDays = 30
+	
+	// Network constants
+	dnsServer = "8.8.8.8:80"
+	networkType = "udp"
+	
+	// HTTP client timeout
+	httpTimeout = 30 * time.Second
+)
+
+// LocalIPCertificate manages SSL certificates for local IP addresses using local-ip.sh service.
 type LocalIPCertificate struct {
 	logger   logger.Logger
 	cacheDir string
@@ -23,7 +45,8 @@ type LocalIPCertificate struct {
 	hostname string
 }
 
-// NewLocalIPCertificate creates a new LocalIPCertificate instance
+// NewLocalIPCertificate creates a new LocalIPCertificate instance.
+// Certificates are cached in a temporary directory.
 func NewLocalIPCertificate(logger logger.Logger) *LocalIPCertificate {
 	cacheDir := filepath.Join(os.TempDir(), "gostremiofr-ssl")
 	return &LocalIPCertificate{
@@ -32,9 +55,11 @@ func NewLocalIPCertificate(logger logger.Logger) *LocalIPCertificate {
 	}
 }
 
-// Setup downloads and sets up the SSL certificate from local-ip.sh
+// Setup downloads and sets up the SSL certificate from local-ip.sh.
+// It automatically detects the local IP address and constructs the appropriate hostname.
+// Certificates are cached and reused if they are still valid.
 func (l *LocalIPCertificate) Setup() error {
-	l.logger.Infof("[SSL] setting up local-ip.sh certificate")
+	l.logger.Info("setting up local-ip.sh certificate")
 
 	// Get local IP address
 	ip, err := l.getLocalIP()
@@ -42,21 +67,21 @@ func (l *LocalIPCertificate) Setup() error {
 		return fmt.Errorf("failed to get local IP: %w", err)
 	}
 
-	// Construct hostname
-	l.hostname = strings.ReplaceAll(ip, ".", "-") + ".local-ip.sh"
+	// Construct hostname and paths
+	l.hostname = l.constructHostname(ip)
 	l.certPath = filepath.Join(l.cacheDir, "server.pem")
 	l.keyPath = filepath.Join(l.cacheDir, "server.key")
 
-	l.logger.Infof("[SSL] using hostname: %s", l.hostname)
+	l.logger.Infof("using hostname: %s", l.hostname)
 
-	// Check if certificates already exist and are valid
+	// Check if valid certificates already exist
 	if l.certificatesExist() && l.certificatesValid() {
-		l.logger.Infof("[SSL] valid certificates already exist")
+		l.logger.Info("valid certificates already exist")
 		return nil
 	}
 
 	// Create cache directory
-	if err := os.MkdirAll(l.cacheDir, 0755); err != nil {
+	if err := os.MkdirAll(l.cacheDir, dirMode); err != nil {
 		return fmt.Errorf("failed to create cache directory: %w", err)
 	}
 
@@ -65,11 +90,16 @@ func (l *LocalIPCertificate) Setup() error {
 		return fmt.Errorf("failed to download certificates: %w", err)
 	}
 
-	l.logger.Infof("[SSL] certificates downloaded successfully")
+	l.logger.Info("certificates downloaded successfully")
 	return nil
 }
 
-// GetTLSConfig returns the TLS configuration
+// constructHostname creates a hostname from an IP address for local-ip.sh
+func (l *LocalIPCertificate) constructHostname(ip string) string {
+	return strings.ReplaceAll(ip, ".", "-") + ".local-ip.sh"
+}
+
+// GetTLSConfig returns the TLS configuration with the loaded certificates.
 func (l *LocalIPCertificate) GetTLSConfig() (*tls.Config, error) {
 	cert, err := tls.LoadX509KeyPair(l.certPath, l.keyPath)
 	if err != nil {
@@ -81,19 +111,20 @@ func (l *LocalIPCertificate) GetTLSConfig() (*tls.Config, error) {
 	}, nil
 }
 
-// GetHostname returns the configured hostname
+// GetHostname returns the configured hostname.
 func (l *LocalIPCertificate) GetHostname() string {
 	return l.hostname
 }
 
-// GetCertificatePaths returns the paths to the certificate and key files
+// GetCertificatePaths returns the paths to the certificate and key files.
 func (l *LocalIPCertificate) GetCertificatePaths() (certPath, keyPath string) {
 	return l.certPath, l.keyPath
 }
 
-// getLocalIP returns the local IP address
+// getLocalIP returns the local IP address by establishing a UDP connection.
+// This method works reliably across different network configurations.
 func (l *LocalIPCertificate) getLocalIP() (string, error) {
-	conn, err := net.Dial("udp", "8.8.8.8:80")
+	conn, err := net.Dial(networkType, dnsServer)
 	if err != nil {
 		return "", err
 	}
@@ -103,61 +134,55 @@ func (l *LocalIPCertificate) getLocalIP() (string, error) {
 	return localAddr.IP.String(), nil
 }
 
-// certificatesExist checks if certificate files exist
+// certificatesExist checks if both certificate and key files exist.
 func (l *LocalIPCertificate) certificatesExist() bool {
 	_, certErr := os.Stat(l.certPath)
 	_, keyErr := os.Stat(l.keyPath)
 	return certErr == nil && keyErr == nil
 }
 
-// certificatesValid checks if the certificates are still valid
+// certificatesValid checks if the certificates are still valid.
+// Certificates are considered valid if they are less than 30 days old.
 func (l *LocalIPCertificate) certificatesValid() bool {
-	// For local-ip.sh certificates, we'll check if they're less than 30 days old
-	// as they might have expiration dates
 	info, err := os.Stat(l.certPath)
 	if err != nil {
 		return false
 	}
 
 	age := time.Since(info.ModTime())
-	return age < 30*24*time.Hour
+	return age < certValidityDays*24*time.Hour
 }
 
-// downloadCertificates downloads the certificate and key from local-ip.sh
+// downloadCertificates downloads the certificate and key from local-ip.sh.
+// The private key is automatically secured with appropriate file permissions.
 func (l *LocalIPCertificate) downloadCertificates() error {
-	client := httputil.NewHTTPClient(30 * time.Second)
+	client := httputil.NewHTTPClient(httpTimeout)
 
 	// Download certificate
-	certURL := "https://local-ip.sh/server.pem"
-	l.logger.Debugf("[SSL] downloading certificate from %s", certURL)
-
-	if err := l.downloadFile(client, certURL, l.certPath); err != nil {
+	l.logger.Debugf("downloading certificate from %s", certificateURL)
+	if err := l.downloadFile(client, certificateURL, l.certPath); err != nil {
 		return fmt.Errorf("failed to download certificate: %w", err)
 	}
 
 	// Download private key
-	keyURL := "https://local-ip.sh/server.key"
-	l.logger.Debugf("[SSL] downloading private key from %s", keyURL)
-
-	if err := l.downloadFile(client, keyURL, l.keyPath); err != nil {
+	l.logger.Debugf("downloading private key from %s", privateKeyURL)
+	if err := l.downloadFile(client, privateKeyURL, l.keyPath); err != nil {
 		return fmt.Errorf("failed to download private key: %w", err)
 	}
 
 	// Set appropriate permissions for the private key
-	if err := os.Chmod(l.keyPath, 0600); err != nil {
+	if err := os.Chmod(l.keyPath, keyFileMode); err != nil {
 		return fmt.Errorf("failed to set key permissions: %w", err)
 	}
 
 	return nil
 }
 
-// downloadFile downloads a file from URL to destination
+// downloadFile downloads a file from URL to destination.
+// Certificate verification is skipped for local-ip.sh downloads.
 func (l *LocalIPCertificate) downloadFile(client *http.Client, url, dest string) error {
-	// Create a custom transport that skips certificate verification for local-ip.sh
-	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
-	client.Transport = transport
+	// Configure transport with custom TLS settings
+	client.Transport = l.createTransport()
 
 	resp, err := client.Get(url)
 	if err != nil {
@@ -181,8 +206,15 @@ func (l *LocalIPCertificate) downloadFile(client *http.Client, url, dest string)
 	return err
 }
 
-// Cleanup removes the cached certificates
+// createTransport creates an HTTP transport that skips certificate verification
+func (l *LocalIPCertificate) createTransport() *http.Transport {
+	return &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+}
+
+// Cleanup removes the cached certificates and temporary directory.
 func (l *LocalIPCertificate) Cleanup() error {
-	l.logger.Infof("[SSL] cleaning up certificates")
+	l.logger.Info("cleaning up certificates")
 	return os.RemoveAll(l.cacheDir)
 }

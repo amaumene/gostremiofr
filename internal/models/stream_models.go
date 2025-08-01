@@ -1,4 +1,3 @@
-// Package models defines data structures for Stremio stream responses.
 package models
 
 // Stream represents a single playable stream in Stremio format.

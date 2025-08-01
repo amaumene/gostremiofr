@@ -78,11 +78,11 @@ func Logger(log logger.Logger) gin.HandlerFunc {
 
 		switch {
 		case statusCode >= 500:
-			log.Errorf("[Middleware] HTTP request failed - %s %s %d %v %s", clientIP, method, statusCode, latency, path)
+			log.Errorf("HTTP request failed - %s %s %d %v %s", clientIP, method, statusCode, latency, path)
 		case statusCode >= 400:
-			log.Warnf("[Middleware] warning: client error - %s %s %d %v %s", clientIP, method, statusCode, latency, path)
+			log.Warnf("warning: client error - %s %s %d %v %s", clientIP, method, statusCode, latency, path)
 		default:
-			log.Infof("[Middleware] HTTP request completed - %s %s %d %v %s", clientIP, method, statusCode, latency, path)
+			log.Infof("HTTP request completed - %s %s %d %v %s", clientIP, method, statusCode, latency, path)
 		}
 	}
 }

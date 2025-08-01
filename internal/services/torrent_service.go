@@ -143,46 +143,13 @@ func (b *BaseTorrentService) BuildSearchQuery(query string, mediaType string, se
 // - Series (season mode): "name+sXX" (matches both episodes and complete seasons)
 // - Series (episode mode): "name+sXXeXX" (matches specific episode)
 func (b *BaseTorrentService) BuildSearchQueryWithMode(query string, mediaType string, season, episode int, specificEpisode bool) string {
-	// Extract year from query if it's at the end (format: "title year")
-	var title string
-	var year string
-	parts := strings.Fields(query)
-	if len(parts) > 1 {
-		lastPart := parts[len(parts)-1]
-		if yearMatch, _ := regexp.MatchString(`^\d{4}$`, lastPart); yearMatch {
-			year = lastPart
-			title = strings.Join(parts[:len(parts)-1], " ")
-		} else {
-			title = query
-		}
-	} else {
-		title = query
-	}
+	title, year := extractTitleAndYear(query)
+	title = formatQueryString(title)
 
-	// Replace spaces with +
-	title = strings.ReplaceAll(title, " ", "+")
-
-	// Build query based on type
 	if mediaType == "movie" {
-		// For movies: title+year (no prefix)
-		if year != "" {
-			return fmt.Sprintf("%s+%s", title, year)
-		}
-		return title
+		return buildMovieQuery(title, year)
 	} else if mediaType == "series" {
-		// For series with specific episode mode
-		if specificEpisode && season > 0 && episode > 0 {
-			// Search for specific episode: name+s04e01
-			return fmt.Sprintf("%s+s%02de%02d", title, season, episode)
-		}
-		// For series, search by season to get both episodes and complete packs
-		if season > 0 {
-			// Search for season: name+s04 (will match both s04e01 and complete seasons)
-			// Using lowercase 's' as it's the standard format
-			return fmt.Sprintf("%s+s%02d", title, season)
-		}
-		// Just series name if no season specified
-		return title
+		return buildSeriesQuery(title, season, episode, specificEpisode)
 	}
 
 	return title
@@ -231,7 +198,7 @@ func (b *BaseTorrentService) GetTorrentPriority(title string) models.Priority {
 		}
 	}
 
-	logger.Debugf("[TorrentService] torrent priority details - title: '%s', resolution: %d",
+	logger.Debugf("torrent priority details - title: '%s', resolution: %d",
 		title, priority.Resolution)
 	return priority
 }
@@ -246,11 +213,18 @@ func (b *BaseTorrentService) MatchesResolutionFilter(title string) bool {
 
 	// Check resolution filter
 	if parsed.Resolution != "?" && !b.config.IsResolutionAllowed(parsed.Resolution) {
-		logger.Debugf("[TorrentService] resolution filter applied - resolution: '%s', title: %s", parsed.Resolution, title)
+		logger.Debugf("resolution filter applied - resolution: '%s', title: %s", parsed.Resolution, title)
 		return false
 	}
 
 	return true
+}
+
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
 }
 
 func (b *BaseTorrentService) MatchesYear(title string, expectedYear int) bool {
@@ -265,7 +239,8 @@ func (b *BaseTorrentService) MatchesYear(title string, expectedYear int) bool {
 	for _, match := range matches {
 		if year, err := strconv.Atoi(match); err == nil {
 			// Allow some flexibility: exact year or within 1 year
-			if year == expectedYear || year == expectedYear-1 || year == expectedYear+1 {
+			yearDiff := abs(year - expectedYear)
+			if yearDiff <= 1 {
 				return true
 			}
 		}
@@ -309,7 +284,7 @@ func (b *BaseTorrentService) MatchesSeason(title string, season int) bool {
 	}
 
 	logger := logger.New()
-	logger.Debugf("[TorrentService] checking if '%s' matches season %d", title, season)
+	logger.Debugf("checking if '%s' matches season %d", title, season)
 
 	patterns := []string{
 		fmt.Sprintf(`(?i)s%02d(?:[^e]|$)`, season),               // S04 but not S04E01
@@ -330,12 +305,12 @@ func (b *BaseTorrentService) MatchesSeason(title string, season int) bool {
 
 	for _, pattern := range patterns {
 		if matched, _ := regexp.MatchString(pattern, title); matched {
-			logger.Debugf("[TorrentService] '%s' matches season %d with pattern: %s", title, season, pattern)
+			logger.Debugf("'%s' matches season %d with pattern: %s", title, season, pattern)
 			return true
 		}
 	}
 
-	logger.Debugf("[TorrentService] '%s' does not match season %d", title, season)
+	logger.Debugf("'%s' does not match season %d", title, season)
 	return false
 }
 
@@ -386,7 +361,7 @@ func NewTorrentSorter(config *config.Config) *TorrentSorter {
 
 func (ts *TorrentSorter) SortResults(results *models.TorrentResults) {
 	logger := logger.New()
-	logger.Debugf("[TorrentService] sorting torrents - movies: %d, complete series: %d, seasons: %d, episodes: %d",
+	logger.Debugf("sorting torrents - movies: %d, complete series: %d, seasons: %d, episodes: %d",
 		len(results.MovieTorrents), len(results.CompleteSeriesTorrents),
 		len(results.CompleteSeasonTorrents), len(results.EpisodeTorrents))
 
@@ -397,7 +372,7 @@ func (ts *TorrentSorter) SortResults(results *models.TorrentResults) {
 
 	// Log top 3 movies after sorting for debugging
 	if len(results.MovieTorrents) > 0 {
-		logger.Infof("[TorrentService] top movie torrents after sorting:")
+		logger.Infof("top movie torrents after sorting:")
 		for i := 0; i < 3 && i < len(results.MovieTorrents); i++ {
 			t := results.MovieTorrents[i]
 			parsed := ts.ParseFileName(t.Title)
@@ -407,48 +382,34 @@ func (ts *TorrentSorter) SortResults(results *models.TorrentResults) {
 		}
 	}
 
-	logger.Debugf("[TorrentService] torrent sorting completed")
+	logger.Debugf("torrent sorting completed")
 }
 
 func ClassifyTorrent(title string, mediaType string, season, episode int, base *BaseTorrentService) string {
-	titleUpper := strings.ToUpper(title)
-	logger := logger.New()
-
-	if mediaType == "movie" {
-		logger.Debugf("[TorrentService] torrent classification - '%s' classified as movie (media type)", title)
-		return "movie"
+	// Try movie classification
+	if class, ok := classifyAsMovie(title, mediaType); ok {
+		return class
 	}
 
-	if strings.Contains(titleUpper, "COMPLETE") {
-		logger.Debugf("[TorrentService] torrent classification - '%s' classified as complete_series (contains COMPLETE)", title)
-		return "complete_series"
+	// Try complete series classification
+	if class, ok := classifyAsCompleteSeries(title); ok {
+		return class
 	}
 
-	// Check for complete seasons first - matches the requested season
-	if season > 0 && base.MatchesSeason(title, season) {
-		logger.Debugf("[TorrentService] torrent classification - '%s' classified as season (matches season %d)", title, season)
-		return "season"
+	// Try season classification
+	if class, ok := classifyBySeason(title, season, base); ok {
+		return class
 	}
 
-	// If looking for a specific episode
-	if season > 0 && episode > 0 {
-		if base.MatchesEpisode(title, season, episode) {
-			logger.Debugf("[TorrentService] torrent classification - '%s' classified as episode (matches s%02de%02d)", title, season, episode)
-			return "episode"
-		}
+	// Try specific episode classification
+	if class, ok := classifyByEpisode(title, season, episode, base); ok {
+		return class
 	}
 
-	// If looking for complete season (episode == 0)
-	if season > 0 && episode == 0 {
-		// Any episode from this season can be included
-		if base.ContainsSeasonEpisode(title) {
-			// Check if it's from the right season
-			titleUpper := strings.ToUpper(title)
-			seasonPattern := fmt.Sprintf("S%02d", season)
-			if strings.Contains(titleUpper, seasonPattern) {
-				logger.Debugf("[TorrentService] torrent classification - '%s' classified as episode (part of season %d)", title, season)
-				return "episode"
-			}
+	// Try season episode classification (episode == 0)
+	if episode == 0 {
+		if class, ok := classifySeasonEpisode(title, season, base); ok {
+			return class
 		}
 	}
 
@@ -463,80 +424,9 @@ func (b *BaseTorrentService) ProcessTorrents(torrents []GenericTorrent, mediaTyp
 	logger.Debugf("[%s] torrent processing started - total torrents: %d", serviceName, len(torrents))
 
 	for _, torrent := range torrents {
-		// First filter: year matching for movies
-		if mediaType == "movie" && !b.MatchesYear(torrent.GetTitle(), year) {
-			logger.Debugf("[%s] torrent filtered by year - title: %s (expected: %d)", serviceName, torrent.GetTitle(), year)
-			continue
-		}
-
-		torrentInfo := models.TorrentInfo{
-			ID:     torrent.GetID(),
-			Title:  torrent.GetTitle(),
-			Hash:   torrent.GetHash(),
-			Source: torrent.GetSource(),
-			Size:   torrent.GetSize(),
-		}
-
-		var classification string
-		var shouldAdd bool
-
-		// For services that provide type info directly
-		if torrent.GetType() != "" {
-			if mediaType == "movie" && torrent.GetType() == "movie" {
-				classification = "movie"
-				shouldAdd = true
-			} else if mediaType == "series" && torrent.GetType() == "tvshow" {
-				// Continue to title-based classification
-			} else {
-				continue
-			}
-		}
-
-		// For services that provide season/episode info directly
-		if !shouldAdd && torrent.GetSeason() > 0 && torrent.GetEpisode() > 0 {
-			if mediaType == "series" && season > 0 && episode > 0 {
-				if torrent.GetSeason() == season && torrent.GetEpisode() == episode {
-					classification = "episode"
-					shouldAdd = true
-					logger.Infof("[%s] episode match found - s%02de%02d: %s", serviceName, season, episode, torrent.GetTitle())
-				} else {
-					logger.Infof("[%s] episode mismatch - found s%02de%02d, requested s%02de%02d: %s", serviceName, torrent.GetSeason(), torrent.GetEpisode(), season, episode, torrent.GetTitle())
-				}
-			} else {
-				classification = "episode"
-				shouldAdd = true
-			}
-		}
-
-		// Use title-based classification if not already determined
-		if !shouldAdd {
-			classification = ClassifyTorrent(torrent.GetTitle(), mediaType, season, episode, b)
-			shouldAdd = classification != ""
-		}
-
-		if !shouldAdd {
-			continue
-		}
-
-		logger.Debugf("[%s] torrent classification result - title: '%s', type: %s", serviceName, torrent.GetTitle(), classification)
-
-		// Third filter: resolution (after classification)
-		if !b.MatchesResolutionFilter(torrent.GetTitle()) {
-			logger.Debugf("[%s] torrent filtered by resolution after classification - title: %s", serviceName, torrent.GetTitle())
-			continue
-		}
-
-		switch classification {
-		case "movie":
-			logger.Debugf("[%s] adding movie torrent - title: %s", serviceName, torrent.GetTitle())
-			results.MovieTorrents = append(results.MovieTorrents, torrentInfo)
-		case "complete_series":
-			results.CompleteSeriesTorrents = append(results.CompleteSeriesTorrents, torrentInfo)
-		case "episode":
-			logger.Debugf("[%s] adding episode torrent - title: %s", serviceName, torrent.GetTitle())
-			results.EpisodeTorrents = append(results.EpisodeTorrents, torrentInfo)
-		case "season":
-			results.CompleteSeasonTorrents = append(results.CompleteSeasonTorrents, torrentInfo)
+		torrentInfo, classification, shouldAdd := b.processSingleTorrent(torrent, mediaType, season, episode, serviceName, year)
+		if shouldAdd {
+			b.addTorrentToResults(torrentInfo, classification, results, serviceName)
 		}
 	}
 
@@ -551,20 +441,18 @@ func (b *BaseTorrentService) ProcessTorrents(torrents []GenericTorrent, mediaTyp
 	return results
 }
 
-
 type YggTorrentWrapper struct {
 	models.YggTorrent
 }
 
-func (y YggTorrentWrapper) GetID() string       { return fmt.Sprintf("%d", y.ID) }
-func (y YggTorrentWrapper) GetTitle() string    { return y.Title }
-func (y YggTorrentWrapper) GetHash() string     { return y.Hash }
-func (y YggTorrentWrapper) GetSource() string   { return y.Source }
-func (y YggTorrentWrapper) GetType() string     { return "" }
-func (y YggTorrentWrapper) GetSeason() int      { return 0 }
-func (y YggTorrentWrapper) GetEpisode() int     { return 0 }
-func (y YggTorrentWrapper) GetSize() int64      { return y.Size }
-
+func (y YggTorrentWrapper) GetID() string     { return fmt.Sprintf("%d", y.ID) }
+func (y YggTorrentWrapper) GetTitle() string  { return y.Title }
+func (y YggTorrentWrapper) GetHash() string   { return y.Hash }
+func (y YggTorrentWrapper) GetSource() string { return y.Source }
+func (y YggTorrentWrapper) GetType() string   { return "" }
+func (y YggTorrentWrapper) GetSeason() int    { return 0 }
+func (y YggTorrentWrapper) GetEpisode() int   { return 0 }
+func (y YggTorrentWrapper) GetSize() int64    { return y.Size }
 
 func WrapYggTorrents(torrents []models.YggTorrent) []GenericTorrent {
 	generic := make([]GenericTorrent, len(torrents))

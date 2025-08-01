@@ -1,4 +1,3 @@
-// Package models defines data structures for torrent information and processing.
 package models
 
 type TorrentInfo struct {

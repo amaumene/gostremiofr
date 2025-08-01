@@ -66,7 +66,7 @@ func (c *CleanupService) Start(ctx context.Context) error {
 	c.running = true
 	c.mu.Unlock()
 
-	c.logger.Infof("[Cleanup] starting cleanup service with interval: %v, retention: %v", c.interval, c.retentionPeriod)
+	c.logger.Infof("starting cleanup service with interval: %v, retention: %v", c.interval, c.retentionPeriod)
 
 	// Run initial cleanup
 	c.performCleanup()
@@ -88,7 +88,7 @@ func (c *CleanupService) Stop() {
 
 	c.running = false
 	close(c.stopChan)
-	c.logger.Infof("[Cleanup] cleanup service stopped")
+	c.logger.Infof("cleanup service stopped")
 }
 
 // cleanupLoop runs periodic cleanup
@@ -111,59 +111,25 @@ func (c *CleanupService) cleanupLoop(ctx context.Context) {
 
 // performCleanup executes the cleanup process
 func (c *CleanupService) performCleanup() {
-	c.logger.Infof("[Cleanup] starting cleanup process")
+	c.logger.Infof("starting cleanup process")
 
-	// Get old magnets from database
-	oldMagnets, err := c.db.GetOldMagnets(c.retentionPeriod)
-	if err != nil {
-		c.logger.Errorf("[Cleanup] failed to get old magnets: %v", err)
+	oldMagnets, err := c.fetchOldMagnets()
+	if err != nil || oldMagnets == nil {
 		return
 	}
 
-	if len(oldMagnets) == 0 {
-		c.logger.Debugf("[Cleanup] no old magnets to clean up")
-		return
-	}
-
-	c.logger.Infof("[Cleanup] found %d magnets to clean up", len(oldMagnets))
-
-	// Group magnets by API key for efficient cleanup
-	magnetsByKey := make(map[string][]database.Magnet)
-	for _, magnet := range oldMagnets {
-		if magnet.AllDebridID != "" && magnet.AllDebridKey != "" {
-			magnetsByKey[magnet.AllDebridKey] = append(magnetsByKey[magnet.AllDebridKey], magnet)
-		}
-	}
-
-	// Clean up AllDebrid resources
-	var wg sync.WaitGroup
-	for apiKey, magnets := range magnetsByKey {
-		wg.Add(1)
-		go func(key string, mags []database.Magnet) {
-			defer wg.Done()
-			c.cleanupAllDebridMagnets(key, mags)
-		}(apiKey, magnets)
-	}
-	wg.Wait()
-
-	// Clean up database entries
-	cleaned := 0
-	for _, magnet := range oldMagnets {
-		if err := c.db.DeleteMagnet(magnet.ID); err != nil {
-			c.logger.Errorf("[Cleanup] failed to delete magnet %s from database: %v", magnet.ID, err)
-		} else {
-			cleaned++
-		}
-	}
-
-	c.logger.Infof("[Cleanup] cleanup completed: %d magnets removed from database", cleaned)
+	magnetsByKey := c.groupMagnetsByAPIKey(oldMagnets)
+	c.cleanupAllDebridConcurrently(magnetsByKey)
+	
+	cleaned := c.deleteMagnetsFromDatabase(oldMagnets)
+	c.logger.Infof("cleanup completed: %d magnets removed from database", cleaned)
 }
 
 // cleanupAllDebridMagnets removes magnets from AllDebrid
 func (c *CleanupService) cleanupAllDebridMagnets(apiKey string, magnets []database.Magnet) {
 	// Validate API key
 	if !c.validator.IsValidAllDebridKey(apiKey) {
-		c.logger.Warnf("[Cleanup] skipping cleanup for invalid API key: %s", c.validator.MaskAPIKey(apiKey))
+		c.logger.Warnf("skipping cleanup for invalid API key: %s", c.validator.MaskAPIKey(apiKey))
 		return
 	}
 
@@ -174,10 +140,10 @@ func (c *CleanupService) cleanupAllDebridMagnets(apiKey string, magnets []databa
 
 		err := c.allDebrid.DeleteMagnet(magnet.AllDebridID, apiKey)
 		if err != nil {
-			c.logger.Warnf("[Cleanup] failed to delete magnet %s from AllDebrid: %v", magnet.AllDebridID, err)
+			c.logger.Warnf("failed to delete magnet %s from AllDebrid: %v", magnet.AllDebridID, err)
 			// Continue with other magnets even if one fails
 		} else {
-			c.logger.Debugf("[Cleanup] deleted magnet %s from AllDebrid", magnet.AllDebridID)
+			c.logger.Debugf("deleted magnet %s from AllDebrid", magnet.AllDebridID)
 		}
 
 		// Small delay between deletions to avoid rate limiting

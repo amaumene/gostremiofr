@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -57,7 +56,7 @@ func (t *TMDB) SetAPIKey(apiKey string) {
 	// Sanitize and validate the API key
 	sanitizedKey := t.validator.SanitizeAPIKey(apiKey)
 	if apiKey != "" && !t.validator.IsValidTMDBKey(sanitizedKey) {
-		t.logger.Errorf("[TMDB] failed to set API key: invalid format (key: %s)", t.validator.MaskAPIKey(sanitizedKey))
+		t.logger.Errorf("failed to set API key: invalid format (key: %s)", t.validator.MaskAPIKey(sanitizedKey))
 		return
 	}
 	t.apiKey = sanitizedKey
@@ -66,136 +65,45 @@ func (t *TMDB) SetAPIKey(apiKey string) {
 func (t *TMDB) GetIMDBInfo(imdbID string) (string, string, string, int, string, error) {
 	cacheKey := fmt.Sprintf("tmdb:%s", imdbID)
 
-	if data, found := t.cache.Get(cacheKey); found {
-		tmdbData := data.(*models.TMDBData)
-		return tmdbData.Type, tmdbData.Title, tmdbData.Title, tmdbData.Year, tmdbData.OriginalLanguage, nil
+	if result := t.checkMemoryCache(cacheKey); result != nil {
+		return result.Type, result.Title, result.Title, result.Year, result.OriginalLanguage, nil
 	}
 
-	if t.db != nil {
-		if cached, err := t.db.GetCachedTMDB(imdbID); err == nil && cached != nil {
-			tmdbData := &models.TMDBData{
-				Type:             cached.Type,
-				Title:            cached.Title,
-				Year:             cached.Year,
-				OriginalLanguage: cached.OriginalLanguage,
-			}
-			t.cache.Set(cacheKey, tmdbData)
-			return cached.Type, cached.Title, cached.Title, cached.Year, cached.OriginalLanguage, nil
-		}
+	if result := t.checkDatabaseCache(imdbID, cacheKey); result != nil {
+		return result.Type, result.Title, result.Title, result.Year, result.OriginalLanguage, nil
 	}
 
-	// Validate API key before making request
-	if t.apiKey == "" {
-		return "", "", "", 0, "", fmt.Errorf("TMDB API key not configured")
-	}
-
-	if !t.validator.IsValidTMDBKey(t.apiKey) {
-		t.logger.Errorf("[TMDB] failed to make API request: invalid API key format (key: %s)", t.validator.MaskAPIKey(t.apiKey))
-		return "", "", "", 0, "", fmt.Errorf("invalid TMDB API key format")
-	}
-
-	t.rateLimiter.Wait()
-
-	// Use request headers instead of URL parameters when possible
-	// Unfortunately TMDB API requires the key as a query parameter
-	url := fmt.Sprintf("https://api.themoviedb.org/3/find/%s?api_key=%s&external_source=imdb_id",
-		imdbID, t.apiKey)
-
-	t.logger.Debugf("[TMDB] fetching info for %s", imdbID)
-
-	resp, err := t.httpClient.Get(url)
+	tmdbResp, err := t.fetchIMDBData(imdbID)
 	if err != nil {
-		return "", "", "", 0, "", fmt.Errorf("failed to fetch TMDB data: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", "", "", 0, "", fmt.Errorf("TMDB API error: status %d", resp.StatusCode)
+		return "", "", "", 0, "", err
 	}
 
-	var tmdbResp models.TMDBFindResponse
-	if err := json.NewDecoder(resp.Body).Decode(&tmdbResp); err != nil {
-		return "", "", "", 0, "", fmt.Errorf("failed to decode TMDB response: %w", err)
+	tmdbData, err := t.processIMDBResponse(tmdbResp, imdbID)
+	if err != nil {
+		return "", "", "", 0, "", err
 	}
 
-	var mediaType, title, originalLanguage string
-	var year int
-
-	if len(tmdbResp.MovieResults) > 0 {
-		mediaType = "movie"
-		title = tmdbResp.MovieResults[0].OriginalTitle
-		originalLanguage = tmdbResp.MovieResults[0].OriginalLanguage
-		// Extract year from release date (format: "2024-01-15")
-		if tmdbResp.MovieResults[0].ReleaseDate != "" && len(tmdbResp.MovieResults[0].ReleaseDate) >= 4 {
-			if parsedYear, err := strconv.Atoi(tmdbResp.MovieResults[0].ReleaseDate[:4]); err == nil {
-				year = parsedYear
-			}
-		}
-	} else if len(tmdbResp.TVResults) > 0 {
-		mediaType = "series"
-		title = tmdbResp.TVResults[0].OriginalName
-		originalLanguage = tmdbResp.TVResults[0].OriginalLanguage
-		// Extract year from first air date (format: "2024-01-15")
-		if tmdbResp.TVResults[0].FirstAirDate != "" && len(tmdbResp.TVResults[0].FirstAirDate) >= 4 {
-			if parsedYear, err := strconv.Atoi(tmdbResp.TVResults[0].FirstAirDate[:4]); err == nil {
-				year = parsedYear
-			}
-		}
-	} else {
-		return "", "", "", 0, "", fmt.Errorf("no results found for IMDB ID: %s", imdbID)
-	}
-
-	tmdbData := &models.TMDBData{
-		Type:             mediaType,
-		Title:            title,
-		Year:             year,
-		OriginalLanguage: originalLanguage,
-	}
 	t.cache.Set(cacheKey, tmdbData)
+	t.storeTMDBCache(imdbID, tmdbData)
 
-	if t.db != nil {
-		dbCache := &database.TMDBCache{
-			IMDBId:           imdbID,
-			Type:             mediaType,
-			Title:            title,
-			Year:             year,
-			OriginalLanguage: originalLanguage,
-		}
-		if err := t.db.StoreTMDBCache(dbCache); err != nil {
-			t.logger.Errorf("[TMDB] failed to store cache: %v", err)
-		}
-	}
-
-	return mediaType, title, title, year, originalLanguage, nil
+	return tmdbData.Type, tmdbData.Title, tmdbData.Title, tmdbData.Year, tmdbData.OriginalLanguage, nil
 }
 
 // GetTMDBInfo fetches info for a TMDB ID directly
 func (t *TMDB) GetTMDBInfo(tmdbID string) (string, string, string, int, string, error) {
-	// Extract numeric ID from tmdb:12345 format
-	parts := strings.Split(tmdbID, ":")
-	if len(parts) != 2 {
-		return "", "", "", 0, "", fmt.Errorf("invalid TMDB ID format: %s", tmdbID)
+	id, err := t.extractTMDBNumericID(tmdbID)
+	if err != nil {
+		return "", "", "", 0, "", err
 	}
 
-	id := parts[1]
 	cacheKey := fmt.Sprintf("tmdb:direct:%s", tmdbID)
-
-	if data, found := t.cache.Get(cacheKey); found {
-		tmdbData := data.(*models.TMDBData)
-		return tmdbData.Type, tmdbData.Title, tmdbData.Title, tmdbData.Year, tmdbData.OriginalLanguage, nil
+	
+	if result := t.checkMemoryCache(cacheKey); result != nil {
+		return result.Type, result.Title, result.Title, result.Year, result.OriginalLanguage, nil
 	}
 
-	if t.db != nil {
-		if cached, err := t.db.GetCachedTMDB(tmdbID); err == nil && cached != nil {
-			tmdbData := &models.TMDBData{
-				Type:             cached.Type,
-				Title:            cached.Title,
-				Year:             cached.Year,
-				OriginalLanguage: cached.OriginalLanguage,
-			}
-			t.cache.Set(cacheKey, tmdbData)
-			return cached.Type, cached.Title, cached.Title, cached.Year, cached.OriginalLanguage, nil
-		}
+	if result := t.checkDatabaseCache(tmdbID, cacheKey); result != nil {
+		return result.Type, result.Title, result.Title, result.Year, result.OriginalLanguage, nil
 	}
 
 	if err := t.validateAPIKey(); err != nil {
@@ -204,180 +112,90 @@ func (t *TMDB) GetTMDBInfo(tmdbID string) (string, string, string, int, string, 
 
 	t.rateLimiter.Wait()
 
-	// Try both movie and TV endpoints since we don't know the type
-	var mediaType, title, originalLanguage string
-	var year int
-
-	// Try movie first
-	movieURL := fmt.Sprintf("https://api.themoviedb.org/3/movie/%s?api_key=%s", id, t.apiKey)
-	t.logger.Debugf("[TMDB] trying movie endpoint for TMDB ID %s", tmdbID)
-
-	resp, err := t.httpClient.Get(movieURL)
-	if err == nil && resp.StatusCode == http.StatusOK {
-		defer resp.Body.Close()
-		var movie models.TMDBMovieDetails
-		if err := json.NewDecoder(resp.Body).Decode(&movie); err == nil {
-			mediaType = "movie"
-			title = movie.OriginalTitle
-			originalLanguage = movie.OriginalLanguage
-			if movie.ReleaseDate != "" && len(movie.ReleaseDate) >= 4 {
-				if parsedYear, err := strconv.Atoi(movie.ReleaseDate[:4]); err == nil {
-					year = parsedYear
-				}
-			}
-		}
-	} else {
-		if resp != nil {
-			resp.Body.Close()
-		}
-		
-		// Try TV endpoint
-		tvURL := fmt.Sprintf("https://api.themoviedb.org/3/tv/%s?api_key=%s", id, t.apiKey)
-		t.logger.Debugf("[TMDB] trying TV endpoint for TMDB ID %s", tmdbID)
-
-		resp, err = t.httpClient.Get(tvURL)
-		if err != nil {
-			return "", "", "", 0, "", fmt.Errorf("failed to fetch TMDB data for %s: %w", tmdbID, err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			return "", "", "", 0, "", fmt.Errorf("TMDB API error for %s: status %d", tmdbID, resp.StatusCode)
-		}
-
-		var tv models.TMDBTVDetails
-		if err := json.NewDecoder(resp.Body).Decode(&tv); err != nil {
-			return "", "", "", 0, "", fmt.Errorf("failed to decode TMDB TV response for %s: %w", tmdbID, err)
-		}
-
-		mediaType = "series"
-		title = tv.OriginalName
-		originalLanguage = tv.OriginalLanguage
-		if tv.FirstAirDate != "" && len(tv.FirstAirDate) >= 4 {
-			if parsedYear, err := strconv.Atoi(tv.FirstAirDate[:4]); err == nil {
-				year = parsedYear
-			}
-		}
+	mediaType, title, originalLanguage, year, err := t.tryFetchTMDBData(id, tmdbID)
+	if err != nil {
+		return "", "", "", 0, "", err
 	}
 
-	if mediaType == "" {
-		return "", "", "", 0, "", fmt.Errorf("no results found for TMDB ID: %s", tmdbID)
-	}
-
-	tmdbData := &models.TMDBData{
-		Type:             mediaType,
-		Title:            title,
-		Year:             year,
-		OriginalLanguage: originalLanguage,
-	}
-	t.cache.Set(cacheKey, tmdbData)
-
-	if t.db != nil {
-		dbCache := &database.TMDBCache{
-			IMDBId:           tmdbID, // Store TMDB ID in the same field
-			Type:             mediaType,
-			Title:            title,
-			Year:             year,
-			OriginalLanguage: originalLanguage,
-		}
-		if err := t.db.StoreTMDBCache(dbCache); err != nil {
-			t.logger.Errorf("[TMDB] failed to store cache for %s: %v", tmdbID, err)
-		}
-	}
-
+	t.cacheTMDBResult(cacheKey, tmdbID, mediaType, title, year, originalLanguage)
 	return mediaType, title, title, year, originalLanguage, nil
 }
 
-// GetTMDBInfoWithType fetches info for a TMDB ID with a specific media type
-func (t *TMDB) GetTMDBInfoWithType(tmdbID, mediaType string) (string, string, string, int, string, error) {
-	// Extract numeric ID from tmdb:12345 format
+func (t *TMDB) extractTMDBNumericID(tmdbID string) (string, error) {
 	parts := strings.Split(tmdbID, ":")
 	if len(parts) != 2 {
-		return "", "", "", 0, "", fmt.Errorf("invalid TMDB ID format: %s", tmdbID)
+		return "", fmt.Errorf("invalid TMDB ID format: %s", tmdbID)
+	}
+	return parts[1], nil
+}
+
+func (t *TMDB) tryFetchTMDBData(id, tmdbID string) (string, string, string, int, error) {
+	// Try movie first
+	if mediaType, title, originalLanguage, year, err := t.tryFetchMovie(id, tmdbID); err == nil {
+		return mediaType, title, originalLanguage, year, nil
 	}
 
-	id := parts[1]
-	cacheKey := fmt.Sprintf("tmdb:direct:%s:%s", tmdbID, mediaType)
+	// Try TV if movie fails
+	return t.tryFetchTV(id, tmdbID)
+}
 
-	if data, found := t.cache.Get(cacheKey); found {
-		tmdbData := data.(*models.TMDBData)
-		return tmdbData.Type, tmdbData.Title, tmdbData.Title, tmdbData.Year, tmdbData.OriginalLanguage, nil
-	}
+func (t *TMDB) tryFetchMovie(id, tmdbID string) (string, string, string, int, error) {
+	movieURL := fmt.Sprintf("https://api.themoviedb.org/3/movie/%s?api_key=%s", id, t.apiKey)
+	t.logger.Debugf("trying movie endpoint for TMDB ID %s", tmdbID)
 
-	if t.db != nil {
-		if cached, err := t.db.GetCachedTMDB(tmdbID); err == nil && cached != nil {
-			tmdbData := &models.TMDBData{
-				Type:             cached.Type,
-				Title:            cached.Title,
-				Year:             cached.Year,
-				OriginalLanguage: cached.OriginalLanguage,
-			}
-			t.cache.Set(cacheKey, tmdbData)
-			return cached.Type, cached.Title, cached.Title, cached.Year, cached.OriginalLanguage, nil
-		}
-	}
-
-	if err := t.validateAPIKey(); err != nil {
-		return "", "", "", 0, "", err
-	}
-
-	t.rateLimiter.Wait()
-
-	var title, originalLanguage string
-	var year int
-	var apiURL string
-
-	// Use the specific endpoint based on media type
-	if mediaType == "movie" {
-		apiURL = fmt.Sprintf("https://api.themoviedb.org/3/movie/%s?api_key=%s", id, t.apiKey)
-		t.logger.Debugf("[TMDB] fetching movie info for TMDB ID %s", tmdbID)
-	} else if mediaType == "tv" {
-		apiURL = fmt.Sprintf("https://api.themoviedb.org/3/tv/%s?api_key=%s", id, t.apiKey)
-		t.logger.Debugf("[TMDB] fetching TV info for TMDB ID %s", tmdbID)
-	} else {
-		return "", "", "", 0, "", fmt.Errorf("unsupported media type: %s", mediaType)
-	}
-
-	resp, err := t.httpClient.Get(apiURL)
+	resp, err := t.httpClient.Get(movieURL)
 	if err != nil {
-		return "", "", "", 0, "", fmt.Errorf("failed to fetch TMDB data for %s: %w", tmdbID, err)
+		return "", "", "", 0, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", "", "", 0, "", fmt.Errorf("TMDB API error for %s: status %d", tmdbID, resp.StatusCode)
+		return "", "", "", 0, fmt.Errorf("not a movie")
 	}
 
-	if mediaType == "movie" {
-		var movie models.TMDBMovieDetails
-		if err := json.NewDecoder(resp.Body).Decode(&movie); err != nil {
-			return "", "", "", 0, "", fmt.Errorf("failed to decode TMDB movie response for %s: %w", tmdbID, err)
-		}
-
-		title = movie.OriginalTitle
-		originalLanguage = movie.OriginalLanguage
-		if movie.ReleaseDate != "" && len(movie.ReleaseDate) >= 4 {
-			if parsedYear, err := strconv.Atoi(movie.ReleaseDate[:4]); err == nil {
-				year = parsedYear
-			}
-		}
-		mediaType = "movie"
-	} else {
-		var tv models.TMDBTVDetails
-		if err := json.NewDecoder(resp.Body).Decode(&tv); err != nil {
-			return "", "", "", 0, "", fmt.Errorf("failed to decode TMDB TV response for %s: %w", tmdbID, err)
-		}
-
-		title = tv.OriginalName
-		originalLanguage = tv.OriginalLanguage
-		if tv.FirstAirDate != "" && len(tv.FirstAirDate) >= 4 {
-			if parsedYear, err := strconv.Atoi(tv.FirstAirDate[:4]); err == nil {
-				year = parsedYear
-			}
-		}
-		mediaType = "series"
+	var movie models.TMDBMovieDetails
+	if err := json.NewDecoder(resp.Body).Decode(&movie); err != nil {
+		return "", "", "", 0, err
 	}
 
+	year := 0
+	if movie.ReleaseDate != "" && len(movie.ReleaseDate) >= 4 {
+		if parsedYear, err := strconv.Atoi(movie.ReleaseDate[:4]); err == nil {
+			year = parsedYear
+		}
+	}
+	return "movie", movie.OriginalTitle, movie.OriginalLanguage, year, nil
+}
+
+func (t *TMDB) tryFetchTV(id, tmdbID string) (string, string, string, int, error) {
+	tvURL := fmt.Sprintf("https://api.themoviedb.org/3/tv/%s?api_key=%s", id, t.apiKey)
+	t.logger.Debugf("trying TV endpoint for TMDB ID %s", tmdbID)
+
+	resp, err := t.httpClient.Get(tvURL)
+	if err != nil {
+		return "", "", "", 0, fmt.Errorf("failed to fetch TMDB data for %s: %w", tmdbID, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", "", "", 0, fmt.Errorf("TMDB API error for %s: status %d", tmdbID, resp.StatusCode)
+	}
+
+	var tv models.TMDBTVDetails
+	if err := json.NewDecoder(resp.Body).Decode(&tv); err != nil {
+		return "", "", "", 0, fmt.Errorf("failed to decode TMDB TV response for %s: %w", tmdbID, err)
+	}
+
+	year := 0
+	if tv.FirstAirDate != "" && len(tv.FirstAirDate) >= 4 {
+		if parsedYear, err := strconv.Atoi(tv.FirstAirDate[:4]); err == nil {
+			year = parsedYear
+		}
+	}
+	return "series", tv.OriginalName, tv.OriginalLanguage, year, nil
+}
+
+func (t *TMDB) cacheTMDBResult(cacheKey, tmdbID, mediaType, title string, year int, originalLanguage string) {
 	tmdbData := &models.TMDBData{
 		Type:             mediaType,
 		Title:            title,
@@ -388,18 +206,50 @@ func (t *TMDB) GetTMDBInfoWithType(tmdbID, mediaType string) (string, string, st
 
 	if t.db != nil {
 		dbCache := &database.TMDBCache{
-			IMDBId:           tmdbID, // Store TMDB ID in the same field
+			IMDBId:           tmdbID,
 			Type:             mediaType,
 			Title:            title,
 			Year:             year,
 			OriginalLanguage: originalLanguage,
 		}
 		if err := t.db.StoreTMDBCache(dbCache); err != nil {
-			t.logger.Errorf("[TMDB] failed to store cache for %s: %v", tmdbID, err)
+			t.logger.Errorf("failed to store cache for %s: %v", tmdbID, err)
 		}
 	}
+}
 
-	return mediaType, title, title, year, originalLanguage, nil
+// GetTMDBInfoWithType fetches info for a TMDB ID with a specific media type
+func (t *TMDB) GetTMDBInfoWithType(tmdbID, mediaType string) (string, string, string, int, string, error) {
+	id, err := t.extractTMDBID(tmdbID)
+	if err != nil {
+		return "", "", "", 0, "", err
+	}
+
+	cacheKey := fmt.Sprintf("tmdb:direct:%s:%s", tmdbID, mediaType)
+
+	if result := t.checkMemoryCache(cacheKey); result != nil {
+		return result.Type, result.Title, result.Title, result.Year, result.OriginalLanguage, nil
+	}
+
+	if result := t.checkDatabaseCache(tmdbID, cacheKey); result != nil {
+		return result.Type, result.Title, result.Title, result.Year, result.OriginalLanguage, nil
+	}
+
+	if err := t.validateAPIKey(); err != nil {
+		return "", "", "", 0, "", err
+	}
+
+	t.rateLimiter.Wait()
+
+	tmdbData, err := t.fetchTMDBDetails(id, tmdbID, mediaType)
+	if err != nil {
+		return "", "", "", 0, "", err
+	}
+
+	t.cache.Set(cacheKey, tmdbData)
+	t.storeTMDBCache(tmdbID, tmdbData)
+
+	return tmdbData.Type, tmdbData.Title, tmdbData.Title, tmdbData.Year, tmdbData.OriginalLanguage, nil
 }
 
 // GetPopularMovies fetches popular movies from TMDB
@@ -423,7 +273,7 @@ func (t *TMDB) GetPopularMovies(page int, genreID string) ([]models.Meta, error)
 		url += "&with_genres=" + genreID
 	}
 
-	t.logger.Debugf("[TMDB] fetching popular movies page %d", page)
+	t.logger.Debugf("fetching popular movies page %d", page)
 
 	resp, err := t.httpClient.Get(url)
 	if err != nil {
@@ -467,7 +317,7 @@ func (t *TMDB) GetPopularSeries(page int, genreID string) ([]models.Meta, error)
 		url += "&with_genres=" + genreID
 	}
 
-	t.logger.Debugf("[TMDB] fetching popular series page %d", page)
+	t.logger.Debugf("fetching popular series page %d", page)
 
 	resp, err := t.httpClient.Get(url)
 	if err != nil {
@@ -507,7 +357,7 @@ func (t *TMDB) GetTrending(mediaType string, timeWindow string, page int) ([]mod
 	url := fmt.Sprintf("https://api.themoviedb.org/3/trending/%s/%s?api_key=%s&page=%d",
 		mediaType, timeWindow, t.apiKey, page)
 
-	t.logger.Debugf("[TMDB] fetching trending %s for %s", mediaType, timeWindow)
+	t.logger.Debugf("fetching trending %s for %s", mediaType, timeWindow)
 
 	resp, err := t.httpClient.Get(url)
 	if err != nil {
@@ -547,66 +397,25 @@ func (t *TMDB) SearchMulti(query string, page int) ([]models.Meta, error) {
 		return data.([]models.Meta), nil
 	}
 
-	if err := t.validateAPIKey(); err != nil {
+	results, err := t.fetchSearchResults(query, page)
+	if err != nil {
 		return nil, err
 	}
 
-	t.rateLimiter.Wait()
-
-	encodedQuery := url.QueryEscape(query)
-	apiURL := fmt.Sprintf("https://api.themoviedb.org/3/search/multi?api_key=%s&query=%s&page=%d&include_adult=false",
-		t.apiKey, encodedQuery, page)
-
-	t.logger.Debugf("[TMDB] searching for '%s' page %d", query, page)
-
-	resp, err := t.httpClient.Get(apiURL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to search: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("TMDB API error: status %d", resp.StatusCode)
-	}
-
-	// Parse search results and convert to metas
-	var searchResp struct {
-		Results []json.RawMessage `json:"results"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&searchResp); err != nil {
-		return nil, fmt.Errorf("failed to decode search response: %w", err)
-	}
-
-	var metas []models.Meta
-	for _, result := range searchResp.Results {
-		var mediaType struct {
-			MediaType string `json:"media_type"`
-		}
-		if err := json.Unmarshal(result, &mediaType); err != nil {
-			continue
-		}
-
-		switch mediaType.MediaType {
-		case "movie":
-			var movie models.TMDBMovie
-			if err := json.Unmarshal(result, &movie); err == nil {
-				meta := t.convertMovieToMeta(movie)
-				meta.Type = "movie"
-				metas = append(metas, meta)
-			}
-		case "tv":
-			var tv models.TMDBTV
-			if err := json.Unmarshal(result, &tv); err == nil {
-				meta := t.convertTVToMeta(tv)
-				meta.Type = "series"
-				metas = append(metas, meta)
-			}
-		}
-	}
-
+	metas := t.processSearchResults(results)
+	
 	t.cache.Set(cacheKey, metas)
 	return metas, nil
+}
+
+func (t *TMDB) processSearchResults(results []json.RawMessage) []models.Meta {
+	var metas []models.Meta
+	for _, result := range results {
+		if meta := t.processSearchResult(result); meta != nil {
+			metas = append(metas, *meta)
+		}
+	}
+	return metas
 }
 
 // GetMetadata fetches detailed metadata for a specific item
@@ -618,54 +427,18 @@ func (t *TMDB) GetMetadata(mediaType, tmdbID string) (*models.Meta, error) {
 		return meta, nil
 	}
 
-	if err := t.validateAPIKey(); err != nil {
+	details, err := t.fetchMediaDetails(mediaType, tmdbID)
+	if err != nil {
 		return nil, err
 	}
 
-	t.rateLimiter.Wait()
-
 	var meta models.Meta
-
 	if mediaType == "movie" {
-		url := fmt.Sprintf("https://api.themoviedb.org/3/movie/%s?api_key=%s&append_to_response=credits",
-			tmdbID, t.apiKey)
-
-		resp, err := t.httpClient.Get(url)
-		if err != nil {
-			return nil, fmt.Errorf("failed to fetch movie details: %w", err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("TMDB API error: status %d", resp.StatusCode)
-		}
-
-		var details models.TMDBMovieDetails
-		if err := json.NewDecoder(resp.Body).Decode(&details); err != nil {
-			return nil, fmt.Errorf("failed to decode movie details: %w", err)
-		}
-
-		meta = t.convertMovieDetailsToMeta(details)
+		movieDetails := details.(*models.TMDBMovieDetails)
+		meta = t.convertMovieDetailsToMeta(*movieDetails)
 	} else {
-		url := fmt.Sprintf("https://api.themoviedb.org/3/tv/%s?api_key=%s&append_to_response=credits,external_ids",
-			tmdbID, t.apiKey)
-
-		resp, err := t.httpClient.Get(url)
-		if err != nil {
-			return nil, fmt.Errorf("failed to fetch TV details: %w", err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("TMDB API error: status %d", resp.StatusCode)
-		}
-
-		var details models.TMDBTVDetails
-		if err := json.NewDecoder(resp.Body).Decode(&details); err != nil {
-			return nil, fmt.Errorf("failed to decode TV details: %w", err)
-		}
-
-		meta = t.convertTVDetailsToMeta(details)
+		tvDetails := details.(*models.TMDBTVDetails)
+		meta = t.convertTVDetailsToMeta(*tvDetails)
 	}
 
 	t.cache.Set(cacheKey, &meta)
@@ -680,11 +453,17 @@ func (t *TMDB) validateAPIKey() error {
 	}
 
 	if !t.validator.IsValidTMDBKey(t.apiKey) {
-		t.logger.Errorf("[TMDB] invalid API key format (key: %s)", t.validator.MaskAPIKey(t.apiKey))
+		t.logger.Errorf("invalid API key format (key: %s)", t.validator.MaskAPIKey(t.apiKey))
 		return fmt.Errorf("invalid TMDB API key format")
 	}
 
 	return nil
+}
+
+func (t *TMDB) buildTMDBURL(endpoint string, params ...interface{}) string {
+	baseURL := "https://api.themoviedb.org/3"
+	path := fmt.Sprintf(endpoint, params...)
+	return fmt.Sprintf("%s%s?api_key=%s", baseURL, path, t.apiKey)
 }
 
 func (t *TMDB) convertMoviesToMetas(movies []models.TMDBMovie) []models.Meta {
@@ -731,7 +510,7 @@ func (t *TMDB) fetchTVDetails(tmdbID int) (*models.TMDBTVDetails, error) {
 	}
 
 	t.rateLimiter.Wait()
-	
+
 	url := fmt.Sprintf("https://api.themoviedb.org/3/tv/%d?api_key=%s&append_to_response=credits,external_ids",
 		tmdbID, t.apiKey)
 
@@ -814,109 +593,10 @@ func (t *TMDB) convertMovieDetailsToMeta(details models.TMDBMovieDetails) models
 }
 
 func (t *TMDB) convertTVDetailsToMeta(details models.TMDBTVDetails) models.Meta {
-	var genres []string
-	for _, g := range details.Genres {
-		genres = append(genres, g.Name)
-	}
-
-	var cast []string
-	for i, actor := range details.Credits.Cast {
-		if i >= 5 { // Limit to top 5 actors
-			break
-		}
-		cast = append(cast, actor.Name)
-	}
-
-	runtime := ""
-	if len(details.EpisodeRunTime) > 0 {
-		runtime = fmt.Sprintf("%d min", details.EpisodeRunTime[0])
-	}
-
-	// Generate videos (episodes) for the series
-	var videos []models.Video
-	
-	// Filter out special seasons and create a list of seasons to fetch
-	var seasonsToFetch []models.TMDBSeason
-	for _, season := range details.Seasons {
-		if season.SeasonNumber > 0 {
-			seasonsToFetch = append(seasonsToFetch, season)
-		}
-	}
-
-	// For series with many seasons, only fetch recent seasons by default
-	if len(seasonsToFetch) > 20 {
-		t.logger.Infof("[TMDB] Series %d has %d seasons, fetching only recent seasons", details.ID, len(seasonsToFetch))
-		// Sort seasons by number and take the last 10 seasons
-		if len(seasonsToFetch) > 10 {
-			seasonsToFetch = seasonsToFetch[len(seasonsToFetch)-10:]
-		}
-	}
-
-	// For series with many seasons, fetch them concurrently in batches
-	const batchSize = 5 // Process 5 seasons at a time to avoid overwhelming the API
-	type seasonResult struct {
-		seasonNumber int
-		videos       []models.Video
-	}
-	resultsChan := make(chan seasonResult, len(seasonsToFetch))
-	var wg sync.WaitGroup
-
-	for i := 0; i < len(seasonsToFetch); i += batchSize {
-		end := i + batchSize
-		if end > len(seasonsToFetch) {
-			end = len(seasonsToFetch)
-		}
-
-		// Process batch of seasons concurrently
-		for j := i; j < end; j++ {
-			wg.Add(1)
-			go func(season models.TMDBSeason) {
-				defer wg.Done()
-				
-				episodes, err := t.getSeasonEpisodes(details.ID, season.SeasonNumber)
-				if err != nil {
-					t.logger.Warnf("[TMDB] failed to fetch episodes for season %d of series %d: %v", season.SeasonNumber, details.ID, err)
-					return
-				}
-
-				var seasonVideos []models.Video
-				for _, episode := range episodes {
-					video := models.Video{
-						ID:        fmt.Sprintf("%s:%d:%d", details.ExternalIds.IMDBId, episode.SeasonNumber, episode.EpisodeNumber),
-						Title:     episode.Name,
-						Season:    episode.SeasonNumber,
-						Episode:   episode.EpisodeNumber,
-						Released:  episode.AirDate,
-						Overview:  episode.Overview,
-						Thumbnail: t.buildImageURL(episode.StillPath, "w300"),
-					}
-					seasonVideos = append(seasonVideos, video)
-				}
-				resultsChan <- seasonResult{
-					seasonNumber: season.SeasonNumber,
-					videos:       seasonVideos,
-				}
-			}(seasonsToFetch[j])
-		}
-
-		// Wait for current batch to complete before starting next batch
-		wg.Wait()
-	}
-
-	close(resultsChan)
-
-	// Collect all videos from the channel and sort by season number
-	seasonMap := make(map[int][]models.Video)
-	for result := range resultsChan {
-		seasonMap[result.seasonNumber] = result.videos
-	}
-	
-	// Add videos in season order
-	for _, season := range seasonsToFetch {
-		if seasonVideos, ok := seasonMap[season.SeasonNumber]; ok {
-			videos = append(videos, seasonVideos...)
-		}
-	}
+	genres := t.extractGenres(details.Genres)
+	cast := t.extractTopCast(details.Credits.Cast, 5)
+	runtime := t.formatRuntime(details.EpisodeRunTime)
+	videos := t.fetchAllSeasonVideos(details)
 
 	return models.Meta{
 		ID:          details.ExternalIds.IMDBId,
@@ -933,6 +613,141 @@ func (t *TMDB) convertTVDetailsToMeta(details models.TMDBTVDetails) models.Meta 
 		Language:    details.OriginalLanguage,
 		Videos:      videos,
 	}
+}
+
+func (t *TMDB) extractGenres(genres []models.TMDBGenre) []string {
+	var result []string
+	for _, g := range genres {
+		result = append(result, g.Name)
+	}
+	return result
+}
+
+func (t *TMDB) extractTopCast(cast []models.CastMember, limit int) []string {
+	var result []string
+	for i, actor := range cast {
+		if i >= limit {
+			break
+		}
+		result = append(result, actor.Name)
+	}
+	return result
+}
+
+func (t *TMDB) formatRuntime(episodeRunTime []int) string {
+	if len(episodeRunTime) > 0 {
+		return fmt.Sprintf("%d min", episodeRunTime[0])
+	}
+	return ""
+}
+
+func (t *TMDB) fetchAllSeasonVideos(details models.TMDBTVDetails) []models.Video {
+	seasonsToFetch := t.filterRegularSeasons(details.Seasons)
+	seasonsToFetch = t.limitSeasonsForLargeSeries(seasonsToFetch, details.ID)
+	
+	seasonVideos := t.fetchSeasonsInBatches(details.ID, details.ExternalIds.IMDBId, seasonsToFetch)
+	return t.combineSeasonVideos(seasonsToFetch, seasonVideos)
+}
+
+func (t *TMDB) filterRegularSeasons(seasons []models.TMDBSeason) []models.TMDBSeason {
+	var result []models.TMDBSeason
+	for _, season := range seasons {
+		if season.SeasonNumber > 0 {
+			result = append(result, season)
+		}
+	}
+	return result
+}
+
+func (t *TMDB) limitSeasonsForLargeSeries(seasons []models.TMDBSeason, seriesID int) []models.TMDBSeason {
+	if len(seasons) > 20 {
+		t.logger.Infof("Series %d has %d seasons, fetching only recent seasons", seriesID, len(seasons))
+		if len(seasons) > 10 {
+			return seasons[len(seasons)-10:]
+		}
+	}
+	return seasons
+}
+
+type seasonResult struct {
+	seasonNumber int
+	videos       []models.Video
+}
+
+func (t *TMDB) fetchSeasonsInBatches(seriesID int, imdbID string, seasons []models.TMDBSeason) map[int][]models.Video {
+	const batchSize = 5
+	resultsChan := make(chan seasonResult, len(seasons))
+	var wg sync.WaitGroup
+
+	for i := 0; i < len(seasons); i += batchSize {
+		end := i + batchSize
+		if end > len(seasons) {
+			end = len(seasons)
+		}
+		t.processBatchOfSeasons(seriesID, imdbID, seasons[i:end], resultsChan, &wg)
+		wg.Wait()
+	}
+
+	close(resultsChan)
+	return t.collectSeasonResults(resultsChan)
+}
+
+func (t *TMDB) processBatchOfSeasons(seriesID int, imdbID string, batch []models.TMDBSeason, resultsChan chan<- seasonResult, wg *sync.WaitGroup) {
+	for _, season := range batch {
+		wg.Add(1)
+		go t.fetchSeasonVideos(seriesID, imdbID, season, resultsChan, wg)
+	}
+}
+
+func (t *TMDB) fetchSeasonVideos(seriesID int, imdbID string, season models.TMDBSeason, resultsChan chan<- seasonResult, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	episodes, err := t.getSeasonEpisodes(seriesID, season.SeasonNumber)
+	if err != nil {
+		t.logger.Warnf("failed to fetch episodes for season %d of series %d: %v", season.SeasonNumber, seriesID, err)
+		return
+	}
+
+	videos := t.convertEpisodesToVideos(episodes, imdbID)
+	resultsChan <- seasonResult{
+		seasonNumber: season.SeasonNumber,
+		videos:       videos,
+	}
+}
+
+func (t *TMDB) convertEpisodesToVideos(episodes []models.TMDBEpisode, imdbID string) []models.Video {
+	var videos []models.Video
+	for _, episode := range episodes {
+		video := models.Video{
+			ID:        fmt.Sprintf("%s:%d:%d", imdbID, episode.SeasonNumber, episode.EpisodeNumber),
+			Title:     episode.Name,
+			Season:    episode.SeasonNumber,
+			Episode:   episode.EpisodeNumber,
+			Released:  episode.AirDate,
+			Overview:  episode.Overview,
+			Thumbnail: t.buildImageURL(episode.StillPath, "w300"),
+		}
+		videos = append(videos, video)
+	}
+	return videos
+}
+
+func (t *TMDB) collectSeasonResults(resultsChan <-chan seasonResult) map[int][]models.Video {
+	seasonMap := make(map[int][]models.Video)
+	for result := range resultsChan {
+		seasonMap[result.seasonNumber] = result.videos
+	}
+	return seasonMap
+}
+
+func (t *TMDB) combineSeasonVideos(seasonsToFetch []models.TMDBSeason, seasonMap map[int][]models.Video) []models.Video {
+	var videos []models.Video
+	for _, season := range seasonsToFetch {
+		if seasonVideos, ok := seasonMap[season.SeasonNumber]; ok {
+			videos = append(videos, seasonVideos...)
+		}
+	}
+	return videos
 }
 
 // getSeasonEpisodes fetches episodes for a specific season
@@ -952,7 +767,7 @@ func (t *TMDB) getSeasonEpisodes(seriesID, seasonNumber int) ([]models.TMDBEpiso
 	url := fmt.Sprintf("https://api.themoviedb.org/3/tv/%d/season/%d?api_key=%s",
 		seriesID, seasonNumber, t.apiKey)
 
-	t.logger.Debugf("[TMDB] fetching episodes for series %d season %d", seriesID, seasonNumber)
+	t.logger.Debugf("fetching episodes for series %d season %d", seriesID, seasonNumber)
 
 	resp, err := t.httpClient.Get(url)
 	if err != nil {
@@ -977,18 +792,18 @@ func (t *TMDB) getSeasonEpisodes(seriesID, seasonNumber int) ([]models.TMDBEpiso
 func (t *TMDB) prefetchSeasons(seriesID int, seasons []models.TMDBSeason) {
 	const batchSize = 10 // Increase batch size for prefetching
 	var wg sync.WaitGroup
-	
+
 	for i := 0; i < len(seasons); i += batchSize {
 		end := i + batchSize
 		if end > len(seasons) {
 			end = len(seasons)
 		}
-		
+
 		for j := i; j < end; j++ {
 			if seasons[j].SeasonNumber == 0 {
 				continue
 			}
-			
+
 			wg.Add(1)
 			go func(seasonNum int) {
 				defer wg.Done()
@@ -996,7 +811,7 @@ func (t *TMDB) prefetchSeasons(seriesID int, seasons []models.TMDBSeason) {
 				_, _ = t.getSeasonEpisodes(seriesID, seasonNum)
 			}(seasons[j].SeasonNumber)
 		}
-		
+
 		// Wait for batch to complete
 		wg.Wait()
 	}

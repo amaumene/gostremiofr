@@ -1,4 +1,3 @@
-// Package models defines data structures for TMDB API responses.
 package models
 
 type TMDBData struct {

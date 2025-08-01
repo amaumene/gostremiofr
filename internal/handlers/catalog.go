@@ -1,8 +1,7 @@
 package handlers
 
 import (
-	"encoding/base64"
-	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,109 +11,101 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func (h *Handler) handleCatalog(c *gin.Context) {
-	configuration := c.Param("configuration")
-	catalogType := c.Param("type")
-	catalogID := c.Param("id")
+func (h *Handler) extractTMDBAPIKey(configuration string) string {
+	userConfig := decodeUserConfig(configuration)
+	return h.extractTMDBKey(userConfig)
+}
 
-	// Extract user configuration
-	var userConfig map[string]interface{}
-	if data, err := base64.StdEncoding.DecodeString(configuration); err == nil {
-		json.Unmarshal(data, &userConfig)
-	}
-
-	// Extract TMDB API key from user configuration
-	tmdbAPIKey := ""
-	if val, ok := userConfig["TMDB_API_KEY"]; ok {
-		if str, ok := val.(string); ok {
-			tmdbAPIKey = str
-		}
-	}
-	// Fall back to config file if not in user configuration
-	if tmdbAPIKey == "" && h.config != nil {
-		tmdbAPIKey = h.config.TMDBAPIKey
-	}
-
-	// Update TMDB service with the API key if available
+func (h *Handler) updateTMDBService(tmdbAPIKey string) {
 	if tmdbAPIKey != "" && h.services.TMDB != nil {
 		if tmdb, ok := h.services.TMDB.(*services.TMDB); ok {
 			tmdb.SetAPIKey(tmdbAPIKey)
 		}
 	}
+}
 
-	// Parse query parameters
-	skip := c.DefaultQuery("skip", "0")
+func (h *Handler) handleCatalog(c *gin.Context) {
+	configuration := c.Param("configuration")
+	catalogType := c.Param("type")
+	catalogID := c.Param("id")
 	genre := c.Query("genre")
 	search := c.Query("search")
 
-	skipInt, err := strconv.Atoi(skip)
-	if err != nil {
-		skipInt = 0
-	}
-
-	// Calculate page from skip (assuming 20 items per page)
+	skipInt, _ := strconv.Atoi(c.DefaultQuery("skip", "0"))
 	page := (skipInt / 20) + 1
 
-	h.services.Logger.Infof("[CatalogHandler] processing catalog request - type: %s, id: %s, page: %d", catalogType, catalogID, page)
+	tmdbAPIKey := h.extractTMDBAPIKey(configuration)
+	h.updateTMDBService(tmdbAPIKey)
 
-	var metas []models.Meta
+	h.services.Logger.Debugf("catalog request: %s/%s (page %d)", catalogType, catalogID, page)
 
-	// Handle search catalog
-	if catalogID == "search" && search != "" {
-		metas, err = h.services.TMDB.SearchMulti(search, page)
-		if err != nil {
-			h.services.Logger.Errorf("[CatalogHandler] search failed: %v", err)
-			c.JSON(http.StatusOK, models.CatalogResponse{Metas: []models.Meta{}})
-			return
-		}
-	} else {
-		// Handle regular catalogs
-		switch catalogID {
-		case "popular":
-			if catalogType == "movie" {
-				metas, err = h.services.TMDB.GetPopularMovies(page, genre)
-			} else {
-				metas, err = h.services.TMDB.GetPopularSeries(page, genre)
-			}
-
-		case "trending":
-			metas, err = h.services.TMDB.GetTrending(catalogType, "week", page)
-
-		case "top_rated":
-			// For now, use popular as placeholder
-			if catalogType == "movie" {
-				metas, err = h.services.TMDB.GetPopularMovies(page, genre)
-			} else {
-				metas, err = h.services.TMDB.GetPopularSeries(page, genre)
-			}
-
-		default:
-			h.services.Logger.Warnf("[CatalogHandler] unknown catalog ID: %s", catalogID)
-			c.JSON(http.StatusOK, models.CatalogResponse{Metas: []models.Meta{}})
-			return
-		}
-
-		if err != nil {
-			h.services.Logger.Errorf("[CatalogHandler] failed to fetch catalog: %v", err)
-			c.JSON(http.StatusOK, models.CatalogResponse{Metas: []models.Meta{}})
-			return
-		}
+	metas, err := h.fetchCatalogMetas(catalogType, catalogID, search, genre, page)
+	if err != nil {
+		h.services.Logger.Errorf("catalog fetch failed: %v", err)
+		c.JSON(http.StatusOK, models.CatalogResponse{Metas: []models.Meta{}})
+		return
 	}
 
-	// Filter by type if needed (search returns mixed results)
-	if catalogID == "search" && catalogType != "" {
-		filtered := make([]models.Meta, 0)
-		for _, meta := range metas {
-			if meta.Type == catalogType {
-				filtered = append(filtered, meta)
-			}
-		}
-		metas = filtered
-	}
-
-	h.services.Logger.Infof("[CatalogHandler] returning %d items for %s/%s", len(metas), catalogType, catalogID)
-
+	metas = h.filterMetasByType(metas, catalogID, catalogType)
+	h.services.Logger.Debugf("returning %d items for %s/%s", len(metas), catalogType, catalogID)
 	c.JSON(http.StatusOK, models.CatalogResponse{Metas: metas})
+}
+
+func (h *Handler) fetchCatalogMetas(catalogType, catalogID, search, genre string, page int) ([]models.Meta, error) {
+	if catalogID == "search" && search != "" {
+		return h.services.TMDB.SearchMulti(search, page)
+	}
+
+	switch catalogID {
+	case "popular":
+		if catalogType == "movie" {
+			return h.services.TMDB.GetPopularMovies(page, genre)
+		}
+		return h.services.TMDB.GetPopularSeries(page, genre)
+
+	case "trending":
+		return h.services.TMDB.GetTrending(catalogType, "week", page)
+
+	case "top_rated":
+		if catalogType == "movie" {
+			return h.services.TMDB.GetPopularMovies(page, genre)
+		}
+		return h.services.TMDB.GetPopularSeries(page, genre)
+
+	default:
+		return []models.Meta{}, nil
+	}
+}
+
+func (h *Handler) filterMetasByType(metas []models.Meta, catalogID, catalogType string) []models.Meta {
+	if catalogID != "search" || catalogType == "" {
+		return metas
+	}
+
+	filtered := make([]models.Meta, 0)
+	for _, meta := range metas {
+		if meta.Type == catalogType {
+			filtered = append(filtered, meta)
+		}
+	}
+	return filtered
+}
+
+func (h *Handler) fetchTMDBMeta(metaType, tmdbID string) (*models.Meta, error) {
+	return h.services.TMDB.GetMetadata(metaType, tmdbID)
+}
+
+func (h *Handler) fetchIMDBMeta(metaID string) (*models.Meta, error) {
+	mediaType, title, _, _, _, err := h.services.TMDB.GetIMDBInfo(metaID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &models.Meta{
+		ID:   metaID,
+		Type: mediaType,
+		Name: title,
+	}, nil
 }
 
 func (h *Handler) handleMeta(c *gin.Context) {
@@ -122,68 +113,35 @@ func (h *Handler) handleMeta(c *gin.Context) {
 	metaType := c.Param("type")
 	metaID := c.Param("id")
 
-	// Extract user configuration
-	var userConfig map[string]interface{}
-	if data, err := base64.StdEncoding.DecodeString(configuration); err == nil {
-		json.Unmarshal(data, &userConfig)
+	tmdbAPIKey := h.extractTMDBAPIKey(configuration)
+	h.updateTMDBService(tmdbAPIKey)
+
+	h.services.Logger.Debugf("fetching metadata: %s/%s", metaType, metaID)
+
+	meta, err := h.fetchMeta(metaType, metaID)
+	if err != nil {
+		h.handleMetaError(c, err)
+		return
 	}
 
-	// Extract TMDB API key from user configuration
-	tmdbAPIKey := ""
-	if val, ok := userConfig["TMDB_API_KEY"]; ok {
-		if str, ok := val.(string); ok {
-			tmdbAPIKey = str
-		}
-	}
-	// Fall back to config file if not in user configuration
-	if tmdbAPIKey == "" && h.config != nil {
-		tmdbAPIKey = h.config.TMDBAPIKey
-	}
+	c.JSON(http.StatusOK, models.MetaResponse{Meta: *meta})
+}
 
-	// Update TMDB service with the API key if available
-	if tmdbAPIKey != "" && h.services.TMDB != nil {
-		if tmdb, ok := h.services.TMDB.(*services.TMDB); ok {
-			tmdb.SetAPIKey(tmdbAPIKey)
-		}
-	}
-
-	h.services.Logger.Infof("[MetaHandler] fetching metadata - type: %s, id: %s", metaType, metaID)
-
-	// Handle TMDB IDs (format: tmdb:12345)
+func (h *Handler) fetchMeta(metaType, metaID string) (*models.Meta, error) {
 	if strings.HasPrefix(metaID, "tmdb:") {
 		tmdbID := strings.TrimPrefix(metaID, "tmdb:")
-		meta, err := h.services.TMDB.GetMetadata(metaType, tmdbID)
-		if err != nil {
-			h.services.Logger.Errorf("[MetaHandler] failed to fetch metadata: %v", err)
-			c.JSON(http.StatusNotFound, gin.H{"error": "Meta not found"})
-			return
-		}
-
-		c.JSON(http.StatusOK, models.MetaResponse{Meta: *meta})
-		return
+		return h.fetchTMDBMeta(metaType, tmdbID)
+	} else if strings.HasPrefix(metaID, "tt") {
+		return h.fetchIMDBMeta(metaID)
 	}
+	return nil, fmt.Errorf("Invalid meta ID format")
+}
 
-	// For IMDB IDs, we need to find the TMDB ID first
-	if strings.HasPrefix(metaID, "tt") {
-		// Get basic info to find TMDB ID
-		mediaType, title, _, _, _, err := h.services.TMDB.GetIMDBInfo(metaID)
-		if err != nil {
-			h.services.Logger.Errorf("[MetaHandler] failed to fetch IMDB info: %v", err)
-			c.JSON(http.StatusNotFound, gin.H{"error": "Meta not found"})
-			return
-		}
-
-		// For now, return basic meta with IMDB ID
-		// In a full implementation, we'd need to map IMDB to TMDB ID
-		meta := models.Meta{
-			ID:   metaID,
-			Type: mediaType,
-			Name: title,
-		}
-
-		c.JSON(http.StatusOK, models.MetaResponse{Meta: meta})
-		return
+func (h *Handler) handleMetaError(c *gin.Context, err error) {
+	if err.Error() == "Invalid meta ID format" {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+	} else {
+		h.services.Logger.Errorf("metadata fetch failed: %v", err)
+		c.JSON(http.StatusNotFound, gin.H{"error": "Meta not found"})
 	}
-
-	c.JSON(http.StatusNotFound, gin.H{"error": "Invalid meta ID format"})
 }

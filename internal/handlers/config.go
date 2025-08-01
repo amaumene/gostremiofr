@@ -6,9 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// handleConfig serves the configuration HTML page
-func (h *Handler) handleConfig(c *gin.Context) {
-	html := `<!DOCTYPE html>
+const configPageHTML = `<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
@@ -168,7 +166,8 @@ func (h *Handler) handleConfig(c *gin.Context) {
 </body>
 </html>`
 
-	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(html))
+func (h *Handler) handleConfig(c *gin.Context) {
+	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(configPageHTML))
 }
 
 // handleConfigWithParams serves the config page with pre-filled values from URL

@@ -1,3 +1,4 @@
+// Package main contains application initialization and setup
 package main
 
 import (
@@ -10,82 +11,113 @@ import (
 	"github.com/amaumene/gostremiofr/internal/database"
 	"github.com/amaumene/gostremiofr/internal/handlers"
 	"github.com/amaumene/gostremiofr/internal/services"
-	"github.com/amaumene/gostremiofr/pkg/logger"
+	log "github.com/amaumene/gostremiofr/pkg/logger"
 )
 
+// Global application components
 var (
-	Logger           logger.Logger
-	DB               database.Database
-	tmdbMemoryCache  *cache.LRUCache
-	handler          *handlers.Handler
-	serviceContainer *services.Container
+	logger      log.Logger
+	db          database.Database
+	tmdbCache   *cache.LRUCache
+	httpHandler *handlers.Handler
+	container   *services.Container
 )
 
-func InitializeLogger() {
-	Logger = logger.New()
+// initLogger initializes the application logger with configured log level
+func initLogger() {
+	logger = log.New()
 
-	// Get log level from environment
-	logLevel := strings.ToLower(os.Getenv("LOG_LEVEL"))
-	if logLevel == "" {
-		logLevel = "info"
+	level := getLogLevel()
+	validateLogLevel(level)
+}
+
+// getLogLevel retrieves log level from environment or returns default
+func getLogLevel() string {
+	level := strings.ToLower(os.Getenv("LOG_LEVEL"))
+	if level == "" {
+		return "info"
+	}
+	return level
+}
+
+// validateLogLevel checks if the provided log level is valid
+func validateLogLevel(level string) {
+	validLevels := map[string]bool{
+		"debug":   true,
+		"info":    true,
+		"warn":    true,
+		"warning": true,
+		"error":   true,
 	}
 
-	// Log level validation (for user feedback)
-	switch logLevel {
-	case "debug", "info", "warn", "warning", "error":
-		// Valid log levels
-	default:
-		Logger.Warnf("[App] warning: unknown log level '%s', defaulting to info", os.Getenv("LOG_LEVEL"))
+	if !validLevels[level] {
+		logger.Warnf("unknown log level %q, defaulting to info", level)
 	}
 }
 
-func InitializeDatabase() {
+// initDatabase initializes the BoltDB database
+func initDatabase() {
+	dbPath := getDatabasePath()
+	
 	var err error
-
-	// Get database directory from environment variable, default to current directory
-	dbDir := os.Getenv("DATABASE_DIR")
-	if dbDir == "" {
-		dbDir = "."
-	}
-	dbPath := filepath.Join(dbDir, "data.db")
-
-	DB, err = database.NewBolt(dbPath)
+	db, err = database.NewBolt(dbPath)
 	if err != nil {
-		Logger.Fatalf("failed to initialize database: %v", err)
+		logger.Fatalf("failed to initialize database: %v", err)
 	}
 
-	Logger.Infof("[App] BoltHold database initialized successfully")
+	logger.Info("database initialized successfully")
 }
 
-func InitializeServices() {
-	// Initialize cache with larger capacity for better performance with large series
-	tmdbMemoryCache = cache.New(5000, 24*time.Hour)
-
-	// Initialize services
-	tmdbService := services.NewTMDB("", tmdbMemoryCache) // empty API key for now
-	yggService := services.NewYGG(DB, tmdbMemoryCache, tmdbService)
-	apibayService := services.NewApibay(DB, tmdbMemoryCache)
-	allDebridService := services.NewAllDebrid("") // empty API key for now
-	allDebridService.SetDB(DB) // Set database for cleanup tracking
-
-	// Initialize cleanup service
-	cleanupService := services.NewCleanupService(DB, allDebridService)
-
-	// Initialize services container
-	serviceContainer = &services.Container{
-		TMDB:          tmdbService,
-		AllDebrid:     allDebridService,
-		YGG:           yggService,
-		Apibay:        apibayService,
-		Cache:         tmdbMemoryCache,
-		DB:            DB,
-		Logger:        logger.New(),
-		TorrentSorter: services.NewTorrentSorter(nil), // Will be updated with config later
-		Cleanup:       cleanupService,
+// getDatabasePath returns the database file path
+func getDatabasePath() string {
+	dir := os.Getenv("DATABASE_DIR")
+	if dir == "" {
+		dir = "."
 	}
+	return filepath.Join(dir, "data.db")
+}
 
-	// Initialize handler
-	handler = handlers.New(serviceContainer, nil)
+// initServices creates and initializes all application services
+func initServices() {
+	tmdbCache = createCache()
+	container = createServiceContainer(tmdbCache, db)
+	httpHandler = handlers.New(container, nil)
+	
+	logger.Info("services initialized successfully")
+}
 
-	Logger.Infof("[App] services initialized successfully")
+// createCache creates a new LRU cache instance
+func createCache() *cache.LRUCache {
+	const (
+		cacheSize = 5000
+		cacheTTL  = 24 * time.Hour
+	)
+	return cache.New(cacheSize, cacheTTL)
+}
+
+// createServiceContainer creates and configures the service container
+func createServiceContainer(c *cache.LRUCache, d database.Database) *services.Container {
+	// Initialize services
+	tmdb := services.NewTMDB("", c)
+	ygg := services.NewYGG(d, c, tmdb)
+	apibay := services.NewApibay(d, c)
+	
+	// Configure AllDebrid service
+	allDebrid := services.NewAllDebrid("")
+	allDebrid.SetDB(d)
+	
+	// Create cleanup service
+	cleanup := services.NewCleanupService(d, allDebrid)
+	
+	return &services.Container{
+		TMDB:          tmdb,
+		AllDebrid:     allDebrid,
+		YGG:           ygg,
+		Apibay:        apibay,
+		Cache:         c,
+		DB:            d,
+		Logger:        log.New(),
+		TorrentSorter: services.NewTorrentSorter(nil),
+		Cleanup:       cleanup,
+	}
 }

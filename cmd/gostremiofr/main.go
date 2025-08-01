@@ -1,8 +1,10 @@
+// Package main is the entry point for the GoStremioFR application.
 package main
 
 import (
 	"compress/gzip"
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -14,24 +16,26 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// GzipResponseWriter wraps gin.ResponseWriter to provide gzip compression
-type GzipResponseWriter struct {
+// gzipResponseWriter wraps gin.ResponseWriter to provide gzip compression
+type gzipResponseWriter struct {
 	gin.ResponseWriter
-	gzipWriter *gzip.Writer
+	writer *gzip.Writer
 }
 
-func (w *GzipResponseWriter) Write(data []byte) (int, error) {
-	return w.gzipWriter.Write(data)
+// Write implements io.Writer interface for gzip compression
+func (w *gzipResponseWriter) Write(data []byte) (int, error) {
+	return w.writer.Write(data)
 }
 
-func (w *GzipResponseWriter) WriteString(s string) (int, error) {
-	return w.gzipWriter.Write([]byte(s))
+// WriteString writes string data with gzip compression
+func (w *gzipResponseWriter) WriteString(s string) (int, error) {
+	return w.writer.Write([]byte(s))
 }
 
-// GzipMiddleware provides gzip compression for responses
-func GzipMiddleware() gin.HandlerFunc {
+// gzipMiddleware provides gzip compression for HTTP responses
+func gzipMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if !strings.Contains(c.GetHeader("Accept-Encoding"), "gzip") {
+		if !acceptsGzip(c) {
 			c.Next()
 			return
 		}
@@ -39,108 +43,143 @@ func GzipMiddleware() gin.HandlerFunc {
 		c.Header("Content-Encoding", "gzip")
 		c.Header("Vary", "Accept-Encoding")
 
-		gzipWriter := gzip.NewWriter(c.Writer)
+		gz := gzip.NewWriter(c.Writer)
 		defer func() {
-			if err := gzipWriter.Close(); err != nil {
-				Logger.Errorf("[App] failed to close gzip writer: %v", err)
+			if err := gz.Close(); err != nil {
+				logger.Errorf("failed to close gzip writer: %v", err)
 			}
 		}()
 
-		c.Writer = &GzipResponseWriter{
+		c.Writer = &gzipResponseWriter{
 			ResponseWriter: c.Writer,
-			gzipWriter:     gzipWriter,
+			writer:         gz,
 		}
 
 		c.Next()
 	}
 }
 
-func main() {
-	// Initialize logger
-	InitializeLogger()
+// acceptsGzip checks if client accepts gzip encoding
+func acceptsGzip(c *gin.Context) bool {
+	return strings.Contains(c.GetHeader("Accept-Encoding"), "gzip")
+}
 
-	// Initialize database
-	InitializeDatabase()
-
-	// Initialize services
-	InitializeServices()
-
-	// Set Gin mode based on environment
+// setupRouter creates and configures the Gin router
+func setupRouter() *gin.Engine {
 	if os.Getenv("GIN_MODE") == "" {
-		// Default to release mode if not specified
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	// Create Gin router
 	r := gin.Default()
+	r.Use(gzipMiddleware())
+	r.Use(corsMiddleware())
 
-	// Add gzip compression middleware
-	r.Use(GzipMiddleware())
+	return r
+}
 
-	// CORS middleware
-	r.Use(func(c *gin.Context) {
+// corsMiddleware adds CORS headers to responses
+func corsMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
 		c.Next()
-	})
+	}
+}
 
-	// Create a context for graceful shutdown
+// startBackgroundServices initializes background tasks
+func startBackgroundServices(ctx context.Context) {
+	tmdbCache.StartCleanup(ctx)
+
+	if container == nil || container.Cleanup == nil {
+		return
+	}
+
+	configureCleanupRetention()
+	if err := container.Cleanup.Start(ctx); err != nil {
+		logger.Errorf("failed to start cleanup service: %v", err)
+	}
+}
+
+// configureCleanupRetention sets retention period from environment
+func configureCleanupRetention() {
+	hours := os.Getenv("ALLDEBRID_RETENTION_HOURS")
+	if hours == "" {
+		return
+	}
+
+	duration, err := time.ParseDuration(hours + "h")
+	if err != nil {
+		logger.Warnf("invalid retention hours %q: %v", hours, err)
+		return
+	}
+
+	container.Cleanup.SetRetentionPeriod(duration)
+	logger.Infof("AllDebrid retention period set to %v", duration)
+}
+
+// getServerPort returns the configured server port
+func getServerPort() string {
+	if port := os.Getenv("PORT"); port != "" {
+		return port
+	}
+	return constants.DefaultPort
+}
+
+// startHTTPSServer starts the server with TLS
+func startHTTPSServer(r *gin.Engine, port string) error {
+	sslManager := ssl.NewLocalIPCertificate(logger)
+	if err := sslManager.Setup(); err != nil {
+		return fmt.Errorf("SSL setup failed: %w", err)
+	}
+
+	cert, key := sslManager.GetCertificatePaths()
+	host := sslManager.GetHostname()
+
+	logger.Infof("starting HTTPS server on port %s", port)
+	logger.Infof("accessible at https://%s:%s", host, port)
+
+	return http.ListenAndServeTLS(":"+port, cert, key, r)
+}
+
+// startHTTPServer starts the server without TLS
+func startHTTPServer(r *gin.Engine, port string) error {
+	logger.Infof("starting HTTP server on port %s", port)
+	return http.ListenAndServe(":"+port, r)
+}
+
+// runServer starts the appropriate server based on configuration
+func runServer(r *gin.Engine, port string) {
+	useSSL := strings.ToLower(os.Getenv("USE_SSL")) == "true"
+
+	if !useSSL {
+		log.Fatal(startHTTPServer(r, port))
+		return
+	}
+
+	if err := startHTTPSServer(r, port); err != nil {
+		logger.Errorf("HTTPS server failed: %v", err)
+		logger.Info("falling back to HTTP")
+		log.Fatal(startHTTPServer(r, port))
+	}
+}
+
+func main() {
+	// Initialize application components
+	initLogger()
+	initDatabase()
+	initServices()
+
+	// Setup HTTP router
+	router := setupRouter()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Start cache cleanup routine with proper context
-	tmdbMemoryCache.StartCleanup(ctx)
+	// Start background services
+	startBackgroundServices(ctx)
 
-	// Start AllDebrid cleanup service
-	if serviceContainer != nil && serviceContainer.Cleanup != nil {
-		// Configure retention period from environment
-		retentionHours := os.Getenv("ALLDEBRID_RETENTION_HOURS")
-		if retentionHours != "" {
-			if hours, err := time.ParseDuration(retentionHours + "h"); err == nil {
-				serviceContainer.Cleanup.SetRetentionPeriod(hours)
-				Logger.Infof("[App] AllDebrid retention period set to %v", hours)
-			}
-		}
-		
-		if err := serviceContainer.Cleanup.Start(ctx); err != nil {
-			Logger.Errorf("[App] failed to start cleanup service: %v", err)
-		}
-	}
+	// Register HTTP routes
+	httpHandler.RegisterRoutes(router)
 
-	// Register all routes through the handler
-	handler.RegisterRoutes(r)
-
-	// Get port from environment or default
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = constants.DefaultPort
-	}
-
-	// Check if SSL is enabled
-	useSSL := strings.ToLower(os.Getenv("USE_SSL")) == "true"
-
-	if useSSL {
-		// Setup SSL certificate from local-ip.sh
-		sslManager := ssl.NewLocalIPCertificate(Logger)
-		if err := sslManager.Setup(); err != nil {
-			Logger.Errorf("[App] failed to setup SSL: %v", err)
-			Logger.Infof("[App] falling back to HTTP")
-			useSSL = false
-		} else {
-			// Get certificate paths
-			certPath, keyPath := sslManager.GetCertificatePaths()
-			hostname := sslManager.GetHostname()
-
-			Logger.Infof("[App] starting HTTPS server on port %s", port)
-			Logger.Infof("[App] accessible at https://%s:%s", hostname, port)
-
-			// Start HTTPS server
-			log.Fatal(http.ListenAndServeTLS(":"+port, certPath, keyPath, r))
-		}
-	}
-
-	if !useSSL {
-		// Start HTTP server
-		Logger.Infof("[App] starting HTTP server on port %s", port)
-		log.Fatal(http.ListenAndServe(":"+port, r))
-	}
+	// Start server
+	port := getServerPort()
+	runServer(router, port)
 }

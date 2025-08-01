@@ -1,4 +1,3 @@
-// Package models defines data structures for Stremio addon protocol.
 package models
 
 type Manifest struct {
