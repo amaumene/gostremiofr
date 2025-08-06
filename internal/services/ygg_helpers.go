@@ -26,12 +26,12 @@ func (t *frenchTitleTranslator) getFrenchTitle(originalTitle string, result *mod
 
 	frenchMeta, err := t.fetchFrenchMetadata(result.Type, tmdbID)
 	if err != nil {
-		t.logger.Debugf("could not get French metadata for '%s', using original", originalTitle)
+		// Could not get French metadata, using original
 		return originalTitle
 	}
 
 	if frenchMeta.Name != originalTitle && frenchMeta.Name != "" {
-		t.logger.Debugf("using French title '%s' instead of '%s'", frenchMeta.Name, originalTitle)
+		// Using French title instead of original
 		return frenchMeta.Name
 	}
 

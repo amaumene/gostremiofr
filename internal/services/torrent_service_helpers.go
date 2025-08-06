@@ -9,6 +9,9 @@ import (
 	"github.com/amaumene/gostremiofr/pkg/logger"
 )
 
+// Compile regex once at package level for performance
+var nonAlphanumericRegex = regexp.MustCompile(`[^a-zA-Z0-9\s]+`)
+
 func (b *BaseTorrentService) filterByYear(torrent GenericTorrent, mediaType string, year int, serviceName string) bool {
 	if mediaType == "movie" && !b.MatchesYear(torrent.GetTitle(), year) {
 		logger := logger.New()
@@ -138,7 +141,16 @@ func extractTitleAndYear(query string) (string, string) {
 }
 
 func formatQueryString(title string) string {
-	return strings.ReplaceAll(title, " ", "+")
+	// Keep only alphanumeric characters and spaces
+	title = nonAlphanumericRegex.ReplaceAllString(title, "")
+	
+	// Replace spaces with + for URL query
+	title = strings.ReplaceAll(title, " ", "+")
+	
+	// Trim any leading/trailing + that might result from trimmed spaces
+	title = strings.Trim(title, "+")
+	
+	return title
 }
 
 func buildMovieQuery(title, year string) string {

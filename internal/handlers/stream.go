@@ -161,8 +161,8 @@ func (h *Handler) configureTorrentServices(userConfig *config.Config) {
 	if h.services.YGG != nil {
 		h.services.YGG.SetConfig(userConfig)
 	}
-	if h.services.Apibay != nil {
-		h.services.Apibay.SetConfig(userConfig)
+	if h.services.TorrentsCSV != nil {
+		h.services.TorrentsCSV.SetConfig(userConfig)
 	}
 	if h.services.TorrentSorter != nil {
 		h.services.TorrentSorter = services.NewTorrentSorter(userConfig)
@@ -263,13 +263,13 @@ func (h *Handler) searchSpecificEpisode(params SearchParams, apiKey string, user
 }
 
 func (h *Handler) performLanguageBasedSearch(params SearchParams, originalLanguage string) *models.CombinedTorrentResults {
-	// Route to YGG if original language is French, otherwise to Apibay
+	// Route to YGG if original language is French, otherwise to TorrentsCSV
 	if originalLanguage == "fr" {
 		h.services.Logger.Debugf("French content: using YGG")
 		return h.performYGGSearch(params)
 	} else {
-		h.services.Logger.Debugf("non-French content: using Apibay")
-		return h.performApibaySearch(params)
+		h.services.Logger.Debugf("non-French content: using TorrentsCSV")
+		return h.performTorrentsCSVSearch(params)
 	}
 }
 
@@ -287,19 +287,30 @@ func (h *Handler) performYGGSearch(params SearchParams) *models.CombinedTorrentR
 }
 
 func (h *Handler) executeYGGSearchQuery(params SearchParams) (*models.TorrentResults, error) {
+	var results *models.TorrentResults
+	var err error
+	
 	if params.EpisodeOnly {
 		h.services.Logger.Debugf("YGG episode search: %s s%02de%02d", params.Query, params.Season, params.Episode)
-		return h.services.YGG.SearchTorrentsSpecificEpisode(params.Query, params.MediaType, params.Season, params.Episode)
-	}
-
-	category := params.MediaType
-	if params.MediaType == "series" {
-		category = "series"
+		results, err = h.services.YGG.SearchTorrentsSpecificEpisode(params.Query, params.MediaType, params.Season, params.Episode)
 	} else {
-		category = "movie"
+		category := params.MediaType
+		if params.MediaType == "series" {
+			category = "series"
+		} else {
+			category = "movie"
+		}
+		h.services.Logger.Debugf("YGG search: %s (%s)", params.Query, category)
+		results, err = h.services.YGG.SearchTorrents(params.Query, category, params.Season, params.Episode)
 	}
-	h.services.Logger.Debugf("YGG search: %s (%s)", params.Query, category)
-	return h.services.YGG.SearchTorrents(params.Query, category, params.Season, params.Episode)
+	
+	if err == nil && results != nil {
+		totalCount := len(results.MovieTorrents) + len(results.CompleteSeriesTorrents) + 
+			len(results.CompleteSeasonTorrents) + len(results.EpisodeTorrents)
+		h.services.Logger.Infof("YGG returned %d torrents", totalCount)
+	}
+	
+	return results, err
 }
 
 func (h *Handler) aggregateYGGResults(results *models.TorrentResults, combinedResults *models.CombinedTorrentResults, episodeOnly bool) {
@@ -315,31 +326,42 @@ func (h *Handler) aggregateYGGResults(results *models.TorrentResults, combinedRe
 	}
 }
 
-func (h *Handler) performApibaySearch(params SearchParams) *models.CombinedTorrentResults {
+func (h *Handler) performTorrentsCSVSearch(params SearchParams) *models.CombinedTorrentResults {
 	combinedResults := models.CombinedTorrentResults{}
-	query := h.buildApibayQuery(params)
+	query := h.buildTorrentsCSVQuery(params)
 
-	results, err := h.executeApibaySearchQuery(params, query)
+	results, err := h.executeTorrentsCSVSearchQuery(params, query)
 	if err != nil {
-		h.services.Logger.Errorf("Apibay search failed: %v", err)
+		h.services.Logger.Errorf("TorrentsCSV search failed: %v", err)
 		return &combinedResults
 	}
 
-	h.aggregateApibayResults(results, &combinedResults, params.EpisodeOnly)
+	h.aggregateTorrentsCSVResults(results, &combinedResults, params.EpisodeOnly)
 	return &combinedResults
 }
 
-func (h *Handler) executeApibaySearchQuery(params SearchParams, query string) (*models.TorrentResults, error) {
+func (h *Handler) executeTorrentsCSVSearchQuery(params SearchParams, query string) (*models.TorrentResults, error) {
+	var results *models.TorrentResults
+	var err error
+	
 	if params.EpisodeOnly {
-		h.services.Logger.Debugf("Apibay episode search: %s s%02de%02d", query, params.Season, params.Episode)
-		return h.services.Apibay.SearchTorrentsSpecificEpisode(query, params.MediaType, params.Season, params.Episode)
+		h.services.Logger.Debugf("TorrentsCSV episode search: %s s%02de%02d", query, params.Season, params.Episode)
+		results, err = h.services.TorrentsCSV.SearchTorrentsSpecificEpisode(query, params.MediaType, params.Season, params.Episode)
+	} else {
+		h.services.Logger.Debugf("TorrentsCSV search: %s (%s)", query, params.MediaType)
+		results, err = h.services.TorrentsCSV.SearchTorrents(query, params.MediaType, params.Season, params.Episode)
 	}
-
-	h.services.Logger.Debugf("Apibay search: %s (%s)", query, params.MediaType)
-	return h.services.Apibay.SearchTorrents(query, params.MediaType, params.Season, params.Episode)
+	
+	if err == nil && results != nil {
+		totalCount := len(results.MovieTorrents) + len(results.CompleteSeriesTorrents) + 
+			len(results.CompleteSeasonTorrents) + len(results.EpisodeTorrents)
+		h.services.Logger.Infof("TorrentsCSV returned %d torrents", totalCount)
+	}
+	
+	return results, err
 }
 
-func (h *Handler) aggregateApibayResults(results *models.TorrentResults, combinedResults *models.CombinedTorrentResults, episodeOnly bool) {
+func (h *Handler) aggregateTorrentsCSVResults(results *models.TorrentResults, combinedResults *models.CombinedTorrentResults, episodeOnly bool) {
 	if results == nil {
 		return
 	}
@@ -359,7 +381,7 @@ func (h *Handler) performParallelSearch(params SearchParams) *models.CombinedTor
 
 	wg.Add(constants.TorrentSearchGoroutines)
 	go h.searchYGGAsync(params, &combinedResults, &mu, &wg)
-	go h.searchApibayAsync(params, &combinedResults, &mu, &wg)
+	go h.searchTorrentsCSVAsync(params, &combinedResults, &mu, &wg)
 
 	h.waitForSearchCompletion(&wg, params.Query)
 	h.logSearchResults(&combinedResults)
@@ -394,14 +416,14 @@ func (h *Handler) searchYGGAsync(params SearchParams, combinedResults *models.Co
 	h.aggregateSearchResults(results, combinedResults, mu, params.EpisodeOnly)
 }
 
-func (h *Handler) searchApibayAsync(params SearchParams, combinedResults *models.CombinedTorrentResults, mu *sync.Mutex, wg *sync.WaitGroup) {
+func (h *Handler) searchTorrentsCSVAsync(params SearchParams, combinedResults *models.CombinedTorrentResults, mu *sync.Mutex, wg *sync.WaitGroup) {
 	defer wg.Done()
-	defer h.recoverFromPanic("Apibay")
+	defer h.recoverFromPanic("TorrentsCSV")
 
-	query := h.buildApibayQuery(params)
-	results, err := h.executeApibaySearch(params, query)
+	query := h.buildTorrentsCSVQuery(params)
+	results, err := h.executeTorrentsCSVSearch(params, query)
 	if err != nil {
-		h.services.Logger.Errorf("Apibay search failed: %v", err)
+		h.services.Logger.Errorf("TorrentsCSV search failed: %v", err)
 		return
 	}
 
@@ -425,21 +447,21 @@ func (h *Handler) executeYGGSearch(params SearchParams) (*models.TorrentResults,
 	return h.services.YGG.SearchTorrents(params.Query, category, params.Season, params.Episode)
 }
 
-func (h *Handler) buildApibayQuery(params SearchParams) string {
+func (h *Handler) buildTorrentsCSVQuery(params SearchParams) string {
 	if params.MediaType == "movie" && params.Year > 0 {
 		return fmt.Sprintf("%s %d", params.Query, params.Year)
 	}
 	return params.Query
 }
 
-func (h *Handler) executeApibaySearch(params SearchParams, query string) (*models.TorrentResults, error) {
+func (h *Handler) executeTorrentsCSVSearch(params SearchParams, query string) (*models.TorrentResults, error) {
 	if params.EpisodeOnly {
-		h.services.Logger.Debugf("Apibay episode search: %s s%02de%02d", query, params.Season, params.Episode)
-		return h.services.Apibay.SearchTorrentsSpecificEpisode(query, params.MediaType, params.Season, params.Episode)
+		h.services.Logger.Debugf("TorrentsCSV episode search: %s s%02de%02d", query, params.Season, params.Episode)
+		return h.services.TorrentsCSV.SearchTorrentsSpecificEpisode(query, params.MediaType, params.Season, params.Episode)
 	}
 
-	h.services.Logger.Debugf("Apibay search: %s (%s)", query, params.MediaType)
-	return h.services.Apibay.SearchTorrents(query, params.MediaType, params.Season, params.Episode)
+	h.services.Logger.Debugf("TorrentsCSV search: %s (%s)", query, params.MediaType)
+	return h.services.TorrentsCSV.SearchTorrents(query, params.MediaType, params.Season, params.Episode)
 }
 
 func (h *Handler) aggregateSearchResults(results *models.TorrentResults, combinedResults *models.CombinedTorrentResults, mu *sync.Mutex, episodeOnly bool) {
@@ -639,11 +661,20 @@ func (h *Handler) waitForMagnetReady(hash string, torrent models.TorrentInfo, ap
 func (h *Handler) processSingleReadyMagnet(magnet *models.ProcessedMagnet, torrent models.TorrentInfo, targetSeason, targetEpisode int, apiKey string) *models.Stream {
 	isSeasonPack := h.isSeasonPack(torrent.Title)
 
+	var stream *models.Stream
 	if targetSeason > 0 && targetEpisode > 0 {
-		return h.processEpisodeFromMagnet(magnet, torrent, targetSeason, targetEpisode, isSeasonPack, apiKey)
+		stream = h.processEpisodeFromMagnet(magnet, torrent, targetSeason, targetEpisode, isSeasonPack, apiKey)
+	} else {
+		stream = h.processLargestFile(magnet, torrent, targetSeason, targetEpisode, isSeasonPack, apiKey)
 	}
-
-	return h.processLargestFile(magnet, torrent, targetSeason, targetEpisode, isSeasonPack, apiKey)
+	
+	// Check if the largest file is a BDMV file
+	if stream != nil && h.isBDMVFile(stream.URL) {
+		h.services.Logger.Infof(" largest file is BDMV (%s), skipping entire torrent: %s", stream.URL, torrent.Title)
+		return nil // This will cause the sequential processor to try the next torrent
+	}
+	
+	return stream
 }
 
 func (h *Handler) processEpisodeFromMagnet(magnet *models.ProcessedMagnet, torrent models.TorrentInfo, targetSeason, targetEpisode int, isSeasonPack bool, apiKey string) *models.Stream {
@@ -689,6 +720,26 @@ func (h *Handler) isSeasonPack(title string) bool {
 	return strings.Contains(titleLower, "complete") ||
 		strings.Contains(titleLower, "season") ||
 		strings.Contains(titleLower, "saison")
+}
+
+// isBDMVFile checks if a URL points to a Blu-ray disc structure file
+func (h *Handler) isBDMVFile(url string) bool {
+	bdmvExtensions := []string{
+		".m2ts",  // Transport stream files
+		".mpls",  // Playlist files
+		".clpi",  // Clip information files
+		".bdmv",  // Blu-ray disc metadata
+		".ssif",  // Stereoscopic 3D stream files
+	}
+	
+	urlLower := strings.ToLower(url)
+	for _, ext := range bdmvExtensions {
+		if strings.HasSuffix(urlLower, ext) {
+			return true
+		}
+	}
+	
+	return false
 }
 
 func formatFileInfoString(linkObj map[string]interface{}) string {

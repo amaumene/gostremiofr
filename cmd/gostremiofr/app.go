@@ -100,7 +100,7 @@ func createServiceContainer(c *cache.LRUCache, d database.Database) *services.Co
 	// Initialize services
 	tmdb := services.NewTMDB("", c)
 	ygg := services.NewYGG(d, c, tmdb)
-	apibay := services.NewApibay(d, c)
+	torrentsCSV := services.NewTorrentsCSV(d, c)
 	
 	// Configure AllDebrid service
 	allDebrid := services.NewAllDebrid("")
@@ -113,7 +113,7 @@ func createServiceContainer(c *cache.LRUCache, d database.Database) *services.Co
 		TMDB:          tmdb,
 		AllDebrid:     allDebrid,
 		YGG:           ygg,
-		Apibay:        apibay,
+		TorrentsCSV:   torrentsCSV,
 		Cache:         c,
 		DB:            d,
 		Logger:        log.New(),

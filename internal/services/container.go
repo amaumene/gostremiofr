@@ -12,7 +12,7 @@ type Container struct {
 	TMDB          TMDBService
 	AllDebrid     AllDebridService
 	YGG           YGGService
-	Apibay        ApibayService
+	TorrentsCSV   TorrentsCSVService
 	Cache         *cache.LRUCache
 	DB            database.Database
 	Logger        logger.Logger
@@ -45,7 +45,7 @@ type YGGService interface {
 	SetConfig(cfg *config.Config)
 }
 
-type ApibayService interface {
+type TorrentsCSVService interface {
 	SearchTorrents(query string, mediaType string, season, episode int) (*models.TorrentResults, error)
 	SearchTorrentsSpecificEpisode(query string, mediaType string, season, episode int) (*models.TorrentResults, error)
 	SetConfig(cfg *config.Config)
