@@ -3,6 +3,7 @@ module github.com/amaumene/gostremiofr
 go 1.24.3
 
 require (
+	github.com/cehbz/torrentname v1.2.1
 	github.com/gin-gonic/gin v1.10.1
 	go.etcd.io/bbolt v1.4.2
 )

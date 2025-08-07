@@ -142,6 +142,7 @@ func (t *TMDB) tryFetchTMDBData(id, tmdbID string) (string, string, string, int,
 func (t *TMDB) tryFetchMovie(id, tmdbID string) (string, string, string, int, error) {
 	movieURL := fmt.Sprintf("https://api.themoviedb.org/3/movie/%s?api_key=%s", id, t.apiKey)
 	t.logger.Debugf("trying movie endpoint for TMDB ID %s", tmdbID)
+	t.logger.Debugf("[TMDB] API URL: %s", movieURL)
 
 	resp, err := t.httpClient.Get(movieURL)
 	if err != nil {
@@ -170,6 +171,7 @@ func (t *TMDB) tryFetchMovie(id, tmdbID string) (string, string, string, int, er
 func (t *TMDB) tryFetchTV(id, tmdbID string) (string, string, string, int, error) {
 	tvURL := fmt.Sprintf("https://api.themoviedb.org/3/tv/%s?api_key=%s", id, t.apiKey)
 	t.logger.Debugf("trying TV endpoint for TMDB ID %s", tmdbID)
+	t.logger.Debugf("[TMDB] API URL: %s", tvURL)
 
 	resp, err := t.httpClient.Get(tvURL)
 	if err != nil {
@@ -274,6 +276,7 @@ func (t *TMDB) GetPopularMovies(page int, genreID string) ([]models.Meta, error)
 	}
 
 	t.logger.Debugf("fetching popular movies page %d", page)
+	t.logger.Debugf("[TMDB] API URL: %s", url)
 
 	resp, err := t.httpClient.Get(url)
 	if err != nil {
@@ -318,6 +321,7 @@ func (t *TMDB) GetPopularSeries(page int, genreID string) ([]models.Meta, error)
 	}
 
 	t.logger.Debugf("fetching popular series page %d", page)
+	t.logger.Debugf("[TMDB] API URL: %s", url)
 
 	resp, err := t.httpClient.Get(url)
 	if err != nil {
@@ -358,6 +362,7 @@ func (t *TMDB) GetTrending(mediaType string, timeWindow string, page int) ([]mod
 		mediaType, timeWindow, t.apiKey, page)
 
 	t.logger.Debugf("fetching trending %s for %s", mediaType, timeWindow)
+	t.logger.Debugf("[TMDB] API URL: %s", url)
 
 	resp, err := t.httpClient.Get(url)
 	if err != nil {
@@ -513,6 +518,8 @@ func (t *TMDB) fetchTVDetails(tmdbID int) (*models.TMDBTVDetails, error) {
 
 	url := fmt.Sprintf("https://api.themoviedb.org/3/tv/%d?api_key=%s&append_to_response=credits,external_ids",
 		tmdbID, t.apiKey)
+	
+	t.logger.Debugf("[TMDB] API URL: %s", url)
 
 	resp, err := t.httpClient.Get(url)
 	if err != nil {
@@ -768,6 +775,7 @@ func (t *TMDB) getSeasonEpisodes(seriesID, seasonNumber int) ([]models.TMDBEpiso
 		seriesID, seasonNumber, t.apiKey)
 
 	t.logger.Debugf("fetching episodes for series %d season %d", seriesID, seasonNumber)
+	t.logger.Debugf("[TMDB] API URL: %s", url)
 
 	resp, err := t.httpClient.Get(url)
 	if err != nil {

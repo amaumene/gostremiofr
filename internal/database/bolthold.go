@@ -125,7 +125,7 @@ func (db *BoltDB) GetCachedTMDB(imdbId string) (*TMDBCache, error) {
 	return convertToTMDBCache(&cache), nil
 }
 
-// convertToTMDBCache converts BoltTMDBCache to TMDBCache
+// convertToTMDBCache converts BoltTMDBCache to TMDBCache.
 func convertToTMDBCache(bolt *BoltTMDBCache) *TMDBCache {
 	return &TMDBCache{
 		IMDBId:           bolt.IMDBId,
@@ -188,7 +188,7 @@ func (db *BoltDB) GetMagnets() ([]Magnet, error) {
 	return convertToMagnets(boltMagnets), nil
 }
 
-// convertToMagnets converts slice of BoltMagnet to slice of Magnet
+// convertToMagnets converts slice of BoltMagnet to slice of Magnet.
 func convertToMagnets(boltMagnets []BoltMagnet) []Magnet {
 	magnets := make([]Magnet, len(boltMagnets))
 	for i, bm := range boltMagnets {
@@ -197,7 +197,7 @@ func convertToMagnets(boltMagnets []BoltMagnet) []Magnet {
 	return magnets
 }
 
-// convertToMagnet converts BoltMagnet to Magnet
+// convertToMagnet converts BoltMagnet to Magnet.
 func convertToMagnet(bolt *BoltMagnet) Magnet {
 	return Magnet{
 		ID:           bolt.ID,

@@ -2,7 +2,6 @@
 package main
 
 import (
-	"compress/gzip"
 	"context"
 	"fmt"
 	"log"
@@ -12,57 +11,10 @@ import (
 	"time"
 
 	"github.com/amaumene/gostremiofr/internal/constants"
+	"github.com/amaumene/gostremiofr/internal/middleware"
 	"github.com/amaumene/gostremiofr/pkg/ssl"
 	"github.com/gin-gonic/gin"
 )
-
-// gzipResponseWriter wraps gin.ResponseWriter to provide gzip compression
-type gzipResponseWriter struct {
-	gin.ResponseWriter
-	writer *gzip.Writer
-}
-
-// Write implements io.Writer interface for gzip compression
-func (w *gzipResponseWriter) Write(data []byte) (int, error) {
-	return w.writer.Write(data)
-}
-
-// WriteString writes string data with gzip compression
-func (w *gzipResponseWriter) WriteString(s string) (int, error) {
-	return w.writer.Write([]byte(s))
-}
-
-// gzipMiddleware provides gzip compression for HTTP responses
-func gzipMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if !acceptsGzip(c) {
-			c.Next()
-			return
-		}
-
-		c.Header("Content-Encoding", "gzip")
-		c.Header("Vary", "Accept-Encoding")
-
-		gz := gzip.NewWriter(c.Writer)
-		defer func() {
-			if err := gz.Close(); err != nil {
-				logger.Errorf("failed to close gzip writer: %v", err)
-			}
-		}()
-
-		c.Writer = &gzipResponseWriter{
-			ResponseWriter: c.Writer,
-			writer:         gz,
-		}
-
-		c.Next()
-	}
-}
-
-// acceptsGzip checks if client accepts gzip encoding
-func acceptsGzip(c *gin.Context) bool {
-	return strings.Contains(c.GetHeader("Accept-Encoding"), "gzip")
-}
 
 // setupRouter creates and configures the Gin router
 func setupRouter() *gin.Engine {
@@ -71,32 +23,26 @@ func setupRouter() *gin.Engine {
 	}
 
 	r := gin.Default()
-	r.Use(gzipMiddleware())
-	r.Use(corsMiddleware())
+	r.Use(middleware.Gzip())
+	r.Use(middleware.CORS())
 
 	return r
-}
-
-// corsMiddleware adds CORS headers to responses
-func corsMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "*")
-		c.Next()
-	}
 }
 
 // startBackgroundServices initializes background tasks
 func startBackgroundServices(ctx context.Context) {
 	tmdbCache.StartCleanup(ctx)
+	startCleanupService(ctx)
+}
 
+// startCleanupService starts the cleanup service if available
+func startCleanupService(ctx context.Context) {
 	if container == nil || container.Cleanup == nil {
 		return
 	}
 
 	configureCleanupRetention()
-	if err := container.Cleanup.Start(ctx); err != nil {
-		logger.Errorf("failed to start cleanup service: %v", err)
-	}
+	container.Cleanup.Start(ctx)
 }
 
 // configureCleanupRetention sets retention period from environment
@@ -108,12 +54,10 @@ func configureCleanupRetention() {
 
 	duration, err := time.ParseDuration(hours + "h")
 	if err != nil {
-		logger.Warnf("invalid retention hours %q: %v", hours, err)
 		return
 	}
 
 	container.Cleanup.SetRetentionPeriod(duration)
-	logger.Infof("AllDebrid retention period set to %v", duration)
 }
 
 // getServerPort returns the configured server port
@@ -132,32 +76,31 @@ func startHTTPSServer(r *gin.Engine, port string) error {
 	}
 
 	cert, key := sslManager.GetCertificatePaths()
-	host := sslManager.GetHostname()
-
-	logger.Infof("starting HTTPS server on port %s", port)
-	logger.Infof("accessible at https://%s:%s", host, port)
-
 	return http.ListenAndServeTLS(":"+port, cert, key, r)
 }
 
 // startHTTPServer starts the server without TLS
 func startHTTPServer(r *gin.Engine, port string) error {
-	logger.Infof("starting HTTP server on port %s", port)
 	return http.ListenAndServe(":"+port, r)
 }
 
 // runServer starts the appropriate server based on configuration
 func runServer(r *gin.Engine, port string) {
-	useSSL := strings.ToLower(os.Getenv("USE_SSL")) == "true"
-
-	if !useSSL {
+	if shouldUseSSL() {
+		runSSLServer(r, port)
+	} else {
 		log.Fatal(startHTTPServer(r, port))
-		return
 	}
+}
 
+// shouldUseSSL determines if SSL should be used
+func shouldUseSSL() bool {
+	return strings.ToLower(os.Getenv("USE_SSL")) == "true"
+}
+
+// runSSLServer attempts to start HTTPS, falls back to HTTP on failure
+func runSSLServer(r *gin.Engine, port string) {
 	if err := startHTTPSServer(r, port); err != nil {
-		logger.Errorf("HTTPS server failed: %v", err)
-		logger.Info("falling back to HTTP")
 		log.Fatal(startHTTPServer(r, port))
 	}
 }

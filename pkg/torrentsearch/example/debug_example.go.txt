@@ -1,0 +1,153 @@
+package main
+
+import (
+	"fmt"
+	"log"
+	"os"
+
+	"github.com/amaumene/gostremiofr/pkg/torrentsearch"
+	"github.com/amaumene/gostremiofr/pkg/torrentsearch/models"
+	"github.com/amaumene/gostremiofr/pkg/torrentsearch/providers"
+)
+
+type SimpleCache struct {
+	data map[string]interface{}
+}
+
+func NewSimpleCache() *SimpleCache {
+	return &SimpleCache{
+		data: make(map[string]interface{}),
+	}
+}
+
+func (c *SimpleCache) Get(key string) (interface{}, bool) {
+	val, exists := c.data[key]
+	return val, exists
+}
+
+func (c *SimpleCache) Set(key string, value interface{}) {
+	c.data[key] = value
+}
+
+func main() {
+	cache := NewSimpleCache()
+	
+	search := torrentsearch.New(cache)
+	
+	// Enable debug mode to see confidence scores
+	search.SetDebugMode(true)
+	
+	tmdbAPIKey := os.Getenv("TMDB_API_KEY")
+	if tmdbAPIKey != "" {
+		search.SetFrenchTranslator(tmdbAPIKey)
+	}
+	
+	yggProvider := providers.NewYGGProvider()
+	search.RegisterProvider("ygg", yggProvider)
+	
+	// Example 1: Movie search with confidence scoring
+	fmt.Println("========================================")
+	fmt.Println("MOVIE SEARCH: The Matrix")
+	fmt.Println("========================================")
+	
+	movieOptions := models.SearchOptions{
+		Query:     "The Matrix",
+		MediaType: "movie",
+		Language:  "fr",
+	}
+	
+	movieResults, err := search.Search("ygg", movieOptions)
+	if err != nil {
+		log.Fatal(err)
+	}
+	
+	fmt.Printf("\nTop 5 results by confidence:\n")
+	for i, torrent := range movieResults.MovieTorrents {
+		if i >= 5 {
+			break
+		}
+		
+		var parsedDetails string
+		if torrent.ParsedInfo != nil {
+			parsedDetails = fmt.Sprintf("\n    Parsed: Title='%s', Year=%d, Resolution='%s', Source='%s', Codec='%s'",
+				torrent.ParsedInfo.Title,
+				torrent.ParsedInfo.Year,
+				torrent.ParsedInfo.Resolution,
+				torrent.ParsedInfo.Source,
+				torrent.ParsedInfo.Codec)
+		}
+		
+		fmt.Printf("\n%d. [%.2f%%] %s\n    Size: %.2f GB, Seeders: %d%s\n",
+			i+1,
+			torrent.ConfidenceScore,
+			torrent.Title,
+			float64(torrent.Size)/(1024*1024*1024),
+			torrent.Seeders,
+			parsedDetails)
+	}
+	
+	// Example 2: Series search with confidence scoring
+	fmt.Println("\n========================================")
+	fmt.Println("SERIES SEARCH: Breaking Bad S01E01")
+	fmt.Println("========================================")
+	
+	seriesOptions := models.SearchOptions{
+		Query:           "Breaking Bad",
+		MediaType:       "series",
+		Season:          1,
+		Episode:         1,
+		Language:        "fr",
+		SpecificEpisode: true,
+	}
+	
+	seriesResults, err := search.Search("ygg", seriesOptions)
+	if err != nil {
+		log.Fatal(err)
+	}
+	
+	fmt.Printf("\nEpisode results by confidence:\n")
+	for i, torrent := range seriesResults.EpisodeTorrents {
+		if i >= 5 {
+			break
+		}
+		
+		var episodeInfo string
+		if torrent.ParsedInfo != nil && torrent.ParsedInfo.Season > 0 {
+			episodeInfo = fmt.Sprintf(" (S%02d", torrent.ParsedInfo.Season)
+			if torrent.ParsedInfo.Episode > 0 {
+				episodeInfo += fmt.Sprintf("E%02d", torrent.ParsedInfo.Episode)
+			}
+			episodeInfo += ")"
+		}
+		
+		fmt.Printf("\n%d. [%.2f%%] %s%s\n    Size: %.2f GB, Seeders: %d\n",
+			i+1,
+			torrent.ConfidenceScore,
+			torrent.Title,
+			episodeInfo,
+			float64(torrent.Size)/(1024*1024*1024),
+			torrent.Seeders)
+	}
+	
+	// Example 3: Filter by minimum confidence
+	fmt.Println("\n========================================")
+	fmt.Println("FILTERING BY CONFIDENCE >= 60%")
+	fmt.Println("========================================")
+	
+	highConfidenceResults := search.FilterByMinConfidence(movieResults, 60.0)
+	
+	fmt.Printf("\nHigh confidence movies (>= 60%%):\n")
+	fmt.Printf("Original count: %d, Filtered count: %d\n",
+		len(movieResults.MovieTorrents),
+		len(highConfidenceResults.MovieTorrents))
+	
+	for i, torrent := range highConfidenceResults.MovieTorrents {
+		if i >= 3 {
+			break
+		}
+		fmt.Printf("%d. [%.2f%%] %s\n",
+			i+1,
+			torrent.ConfidenceScore,
+			torrent.Title)
+	}
+}

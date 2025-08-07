@@ -28,9 +28,12 @@ func (h *Handler) createManifest() models.Manifest {
 		Resources:   []string{"catalog", "meta", "stream"},
 		Catalogs:    h.getDefaultCatalogs(),
 		BehaviorHints: models.BehaviorHints{
-			Configurable: true,
+			Configurable:    true,
+			ConfigurationRequired: true,  // Require configuration since we need API keys
 		},
-		IDPrefixes: []string{"tt", "tmdb:"},
+		IDPrefixes: []string{"tt", "tmdb:"},  // Only accept IMDB (tt) and TMDB IDs
+		Background: constants.AddonBackground,
+		Logo:       constants.AddonLogo,
 	}
 }
 

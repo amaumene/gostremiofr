@@ -1,25 +1,27 @@
+// Package services provides dependency injection container for application services.
 package services
 
 import (
 	"github.com/amaumene/gostremiofr/internal/cache"
-	"github.com/amaumene/gostremiofr/internal/config"
 	"github.com/amaumene/gostremiofr/internal/database"
 	"github.com/amaumene/gostremiofr/internal/models"
 	"github.com/amaumene/gostremiofr/pkg/logger"
+	"github.com/amaumene/gostremiofr/pkg/torrentsearch"
 )
 
+// Container holds all application services for dependency injection.
 type Container struct {
-	TMDB          TMDBService
-	AllDebrid     AllDebridService
-	YGG           YGGService
-	TorrentsCSV   TorrentsCSVService
-	Cache         *cache.LRUCache
-	DB            database.Database
-	Logger        logger.Logger
-	TorrentSorter *TorrentSorter
-	Cleanup       *CleanupService
+	TMDB           TMDBService
+	AllDebrid      AllDebridService
+	Cache          *cache.LRUCache
+	DB             database.Database
+	Logger         logger.Logger
+	TorrentSorter  *TorrentSorter
+	Cleanup        *CleanupService
+	TorrentSearch  *torrentsearch.TorrentSearch
 }
 
+// TMDBService defines the interface for TMDB API operations.
 type TMDBService interface {
 	GetIMDBInfo(imdbID string) (string, string, string, int, string, error)
 	GetTMDBInfo(tmdbID string) (string, string, string, int, string, error)
@@ -31,22 +33,11 @@ type TMDBService interface {
 	GetMetadata(mediaType, tmdbID string) (*models.Meta, error)
 }
 
+// AllDebridService defines the interface for AllDebrid API operations.
 type AllDebridService interface {
 	CheckMagnets(magnets []models.MagnetInfo, apiKey string) ([]models.ProcessedMagnet, error)
 	UploadMagnet(hash, title, apiKey string) error
 	GetVideoFiles(magnetID, apiKey string) ([]models.VideoFile, error)
 	UnlockLink(link, apiKey string) (string, error)
-}
-
-type YGGService interface {
-	SearchTorrents(query string, category string, season, episode int) (*models.TorrentResults, error)
-	SearchTorrentsSpecificEpisode(query string, category string, season, episode int) (*models.TorrentResults, error)
-	GetTorrentHash(torrentID string) (string, error)
-	SetConfig(cfg *config.Config)
-}
-
-type TorrentsCSVService interface {
-	SearchTorrents(query string, mediaType string, season, episode int) (*models.TorrentResults, error)
-	SearchTorrentsSpecificEpisode(query string, mediaType string, season, episode int) (*models.TorrentResults, error)
-	SetConfig(cfg *config.Config)
+	DeleteMagnet(magnetID, apiKey string) error
 }

@@ -74,7 +74,7 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-// loadFromEnv loads configuration from environment variables
+// loadFromEnv loads configuration from environment variables.
 func (c *Config) loadFromEnv() {
 	if tmdbKey := os.Getenv("TMDB_API_KEY"); tmdbKey != "" {
 		c.TMDBAPIKey = tmdbKey
@@ -85,7 +85,7 @@ func (c *Config) loadFromEnv() {
 	}
 }
 
-// loadFromFile loads configuration from a JSON file
+// loadFromFile loads configuration from a JSON file.
 func (c *Config) loadFromFile(filename string) error {
 	data, err := os.ReadFile(filename)
 	if err != nil {
@@ -126,24 +126,6 @@ func (c *Config) InitMaps() {
 	})
 }
 
-// IsResolutionAllowed checks if a resolution is in the allowed list.
-// The check is case-insensitive.
-func (c *Config) IsResolutionAllowed(res string) bool {
-	return c.resMap[strings.ToLower(res)]
-}
-
-// GetResolutionPriority returns the priority of a resolution.
-// Higher values indicate higher priority. Returns 0 if resolution is not allowed.
-func (c *Config) GetResolutionPriority(res string) int {
-	resLower := strings.ToLower(res)
-	for i, allowedRes := range c.ResToShow {
-		if strings.ToLower(allowedRes) == resLower {
-			// Higher index = lower priority (reverse order for sorting)
-			return len(c.ResToShow) - i
-		}
-	}
-	return 0 // Not in list = lowest priority
-}
 
 // CreateFromUserData creates a config from user-provided data and existing config.
 // User data takes precedence over base config values.
@@ -165,7 +147,7 @@ func CreateFromUserData(userConfig map[string]interface{}, baseConfig *Config) *
 	return cfg
 }
 
-// copyFrom copies all fields from another config
+// copyFrom copies all fields from another config.
 func (c *Config) copyFrom(src *Config) {
 	c.TMDBAPIKey = src.TMDBAPIKey
 	c.APIKeyAllDebrid = src.APIKeyAllDebrid
@@ -176,7 +158,7 @@ func (c *Config) copyFrom(src *Config) {
 	c.CacheTTL = src.CacheTTL
 }
 
-// applyUserConfig applies user-provided configuration overrides
+// applyUserConfig applies user-provided configuration overrides.
 func (c *Config) applyUserConfig(userConfig map[string]interface{}) {
 	// Handle resolution list
 	if val, ok := userConfig["RES_TO_SHOW"]; ok {
@@ -206,7 +188,7 @@ func (c *Config) applyUserConfig(userConfig map[string]interface{}) {
 	}
 }
 
-// convertToStringSlice converts interface slice to string slice
+// convertToStringSlice converts interface slice to string slice.
 func convertToStringSlice(arr []interface{}) []string {
 	result := make([]string, 0, len(arr))
 	for _, v := range arr {
@@ -217,7 +199,7 @@ func convertToStringSlice(arr []interface{}) []string {
 	return result
 }
 
-// getEnvOrDefault returns environment variable value or default if not set
+// getEnvOrDefault returns environment variable value or default if not set.
 func getEnvOrDefault(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value

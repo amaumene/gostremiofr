@@ -1,0 +1,141 @@
+package main
+
+import (
+	"fmt"
+	"log"
+	"os"
+
+	"github.com/amaumene/gostremiofr/pkg/torrentsearch"
+	"github.com/amaumene/gostremiofr/pkg/torrentsearch/providers"
+)
+
+type SimpleCache struct {
+	data map[string]interface{}
+}
+
+func NewSimpleCache() *SimpleCache {
+	return &SimpleCache{
+		data: make(map[string]interface{}),
+	}
+}
+
+func (c *SimpleCache) Get(key string) (interface{}, bool) {
+	val, exists := c.data[key]
+	return val, exists
+}
+
+func (c *SimpleCache) Set(key string, value interface{}) {
+	c.data[key] = value
+}
+
+func main() {
+	cache := NewSimpleCache()
+	search := torrentsearch.New(cache)
+	
+	// Set TMDB API key (required)
+	tmdbAPIKey := os.Getenv("TMDB_API_KEY")
+	if tmdbAPIKey == "" {
+		log.Fatal("TMDB_API_KEY environment variable is required")
+	}
+	search.SetTMDBAPIKey(tmdbAPIKey)
+	
+	// Register providers
+	yggProvider := providers.NewYGGProvider()
+	search.RegisterProvider("ygg", yggProvider)
+	
+	// You would also register other providers like torrentscsv here
+	// search.RegisterProvider("torrentscsv", torrentsCSVProvider)
+	
+	// Example 1: English content (e.g., "The Matrix")
+	fmt.Println("\n========================================")
+	fmt.Println("EXAMPLE 1: English Content")
+	fmt.Println("========================================")
+	
+	englishResults, metadata, err := search.SearchSmart("The Matrix", "movie", 0, 0, false)
+	if err != nil {
+		log.Printf("Error searching English content: %v", err)
+	} else {
+		if metadata != nil {
+			log.Printf("Metadata: Original Language=%s, English='%s', French='%s'",
+				metadata.OriginalLanguage, metadata.EnglishTitle, metadata.FrenchTitle)
+		}
+		fmt.Println("\nResults by provider:")
+		for provider, results := range englishResults.Results {
+			fmt.Printf("  %s: %d movies found\n", provider, len(results.MovieTorrents))
+		}
+		// Note: YGG should NOT appear for English content
+	}
+	
+	// Example 2: French content (e.g., "Amélie")
+	fmt.Println("\n========================================")
+	fmt.Println("EXAMPLE 2: French Content")
+	fmt.Println("========================================")
+	
+	frenchResults, err := search.SearchSmart("Amélie", "movie", 0, 0, false)
+	if err != nil {
+		log.Printf("Error searching French content: %v", err)
+	} else {
+		fmt.Println("\nResults by provider:")
+		for provider, results := range frenchResults.Results {
+			fmt.Printf("  %s: %d movies found\n", provider, len(results.MovieTorrents))
+			if provider == "ygg" && len(results.MovieTorrents) > 0 {
+				fmt.Printf("    Sample from YGG (should be French title): %s\n", 
+					results.MovieTorrents[0].Title)
+			}
+		}
+	}
+	
+	// Example 3: Spanish content (e.g., "La Casa de Papel" / "Money Heist")
+	fmt.Println("\n========================================")
+	fmt.Println("EXAMPLE 3: Spanish Content")
+	fmt.Println("========================================")
+	
+	spanishResults, err := search.SearchSmart("La Casa de Papel", "series", 1, 1, true)
+	if err != nil {
+		log.Printf("Error searching Spanish content: %v", err)
+	} else {
+		fmt.Println("\nResults by provider:")
+		for provider, results := range spanishResults.Results {
+			totalResults := len(results.EpisodeTorrents) + len(results.CompleteSeasonTorrents)
+			fmt.Printf("  %s: %d results found\n", provider, totalResults)
+			
+			if provider == "ygg" && len(results.EpisodeTorrents) > 0 {
+				fmt.Printf("    YGG searching with French title for Spanish content\n")
+			}
+		}
+	}
+	
+	// Example 4: Content without metadata (fallback)
+	fmt.Println("\n========================================")
+	fmt.Println("EXAMPLE 4: Unknown Content (Fallback)")
+	fmt.Println("========================================")
+	
+	unknownResults, err := search.SearchSmart("SomeUnknownTitle2024", "movie", 0, 0, false)
+	if err != nil {
+		// This is expected - will fallback to searching without metadata
+		fmt.Printf("Handled fallback for unknown content\n")
+	}
+	if unknownResults != nil {
+		fmt.Println("Results by provider (YGG should be excluded):")
+		for provider := range unknownResults.Results {
+			fmt.Printf("  - %s\n", provider)
+		}
+	}
+}
+
+/*
+Expected behavior:
+
+1. English content (original_language = "en"):
+   - Searches all providers EXCEPT YGG
+   - Uses English title for all searches
+
+2. Non-English content (original_language != "en"):
+   - Searches YGG with French title (if available)
+   - Searches other providers with English title
+   - If no French title exists, YGG is skipped
+
+3. Unknown content (TMDB lookup fails):
+   - Fallback: searches all providers except YGG
+   - Uses original query string
+*/

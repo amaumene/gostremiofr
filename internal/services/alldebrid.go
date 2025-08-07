@@ -117,6 +117,8 @@ func (a *AllDebrid) UploadMagnet(hash, title, apiKey string) error {
 	a.rateLimiter.Wait()
 
 	magnetURL := fmt.Sprintf("magnet:?xt=urn:btih:%s&dn=%s", hash, url.QueryEscape(title))
+	
+	a.logger.Debugf("[AllDebrid] uploading magnet URL: %s", magnetURL)
 
 	// Use our local client
 	resp, err := a.client.UploadMagnet(apiKey, []string{magnetURL})
@@ -132,15 +134,21 @@ func (a *AllDebrid) UploadMagnet(hash, title, apiKey string) error {
 	// Store magnet information in database for cleanup
 	if a.db != nil && len(resp.Data.Magnets) > 0 {
 		magnet := resp.Data.Magnets[0]
+		// Use AllDebrid's magnet ID as part of our ID to ensure uniqueness
 		dbMagnet := &database.Magnet{
-			ID:           fmt.Sprintf("ad_%s_%d", hash, time.Now().Unix()),
+			ID:           fmt.Sprintf("ad_%s_%d_%d", hash, magnet.ID, time.Now().UnixNano()),
 			Hash:         hash,
 			Name:         title,
 			AllDebridID:  fmt.Sprintf("%d", magnet.ID),
 			AllDebridKey: apiKey,
 		}
 		if err := a.db.StoreMagnet(dbMagnet); err != nil {
-			a.logger.Warnf("failed to store magnet in database: %v", err)
+			// Check if it's a duplicate constraint error
+			if strings.Contains(err.Error(), "unique constraint") {
+				a.logger.Debugf("magnet already exists in database: %s", hash)
+			} else {
+				a.logger.Warnf("failed to store magnet in database: %v", err)
+			}
 			// Don't fail the upload, just log the warning
 		}
 	}
@@ -158,6 +166,7 @@ func (a *AllDebrid) GetVideoFiles(magnetID, apiKey string) ([]models.VideoFile, 
 	a.rateLimiter.Wait()
 
 	// Get magnet files
+	a.logger.Debugf("[AllDebrid] getting files for magnet ID: %s", magnetID)
 	resp, err := a.client.GetMagnetFiles(apiKey, magnetID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get video files: %w", err)
@@ -185,6 +194,8 @@ func (a *AllDebrid) UnlockLink(link, apiKey string) (string, error) {
 	}
 
 	a.rateLimiter.Wait()
+	
+	a.logger.Debugf("[AllDebrid] unlocking link: %s", link)
 
 	// Use our local client
 	resp, err := a.client.UnlockLink(apiKey, link)
@@ -213,6 +224,8 @@ func (a *AllDebrid) DeleteMagnet(magnetID, apiKey string) error {
 	}
 
 	a.rateLimiter.Wait()
+	
+	a.logger.Debugf("[AllDebrid] deleting magnet ID: %s", magnetID)
 
 	// Use our local client
 	err = a.client.DeleteMagnet(apiKey, magnetID)
@@ -220,7 +233,7 @@ func (a *AllDebrid) DeleteMagnet(magnetID, apiKey string) error {
 		return fmt.Errorf("failed to delete magnet: %w", err)
 	}
 
-	a.logger.Infof("deleted magnet ID: %s", magnetID)
+	a.logger.Infof("[AllDebrid] successfully deleted non-cached magnet ID: %s", magnetID)
 	return nil
 }
 
@@ -262,6 +275,7 @@ func (a *AllDebrid) checkMagnetStatus(apiKey string, hashes []string) (*magnetSt
 	
 	a.logger.Infof("checking %d specific magnets (API key: %s)", len(hashes), a.validator.MaskAPIKey(apiKey))
 	a.logger.Infof("making POST request to %s", requestURL)
+	a.logger.Debugf("[AllDebrid] API URL: %s (POST with %d hashes)", requestURL, len(hashes))
 
 	resp, err := a.makeAPIRequest(requestURL, formData)
 	if err != nil {
@@ -288,15 +302,33 @@ func (a *AllDebrid) processMagnetResponse(response *magnetStatusResponse, hashTo
 	var processed []models.ProcessedMagnet
 	for _, magnet := range response.Data.Magnets {
 		if original, ok := hashToMagnet[magnet.Hash]; ok {
-			// StatusCode 4 means "Ready" (files are available)
+			// StatusCode 4 means "Ready" (files are available/cached)
+			// StatusCode 0 = Not started, 1 = Downloading, 2 = Downloaded, 3 = Error, 4 = Ready
 			ready := magnet.StatusCode == allDebridStatusReady && len(magnet.Links) > 0
 			name := magnet.Filename
 			if name == "" {
 				name = original.Title
 			}
 
-			a.logger.Debugf("magnet processing details - hash: %s, statusCode: %d, links: %d, ready: %v",
-				magnet.Hash, magnet.StatusCode, len(magnet.Links), ready)
+			// Log cache status clearly
+			var statusDesc string
+			switch magnet.StatusCode {
+			case 0:
+				statusDesc = "NOT_STARTED"
+			case 1:
+				statusDesc = "DOWNLOADING (NOT CACHED)"
+			case 2:
+				statusDesc = "DOWNLOADED"
+			case 3:
+				statusDesc = "ERROR"
+			case 4:
+				statusDesc = "READY (CACHED)"
+			default:
+				statusDesc = fmt.Sprintf("UNKNOWN_%d", magnet.StatusCode)
+			}
+
+			a.logger.Infof("[AllDebrid] magnet status - %s: %s (hash: %s, links: %d)",
+				name, statusDesc, magnet.Hash[:12], len(magnet.Links))
 
 			processed = append(processed, models.ProcessedMagnet{
 				Hash:   magnet.Hash,

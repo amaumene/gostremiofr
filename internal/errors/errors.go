@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-// StreamError represents errors that occur during stream processing
+// StreamError represents errors that occur during stream processing.
 type StreamError struct {
 	Type    string
 	Message string
@@ -24,7 +24,7 @@ func (e *StreamError) Unwrap() error {
 	return e.Cause
 }
 
-// Error type constants
+// Error type constants.
 const (
 	ErrorTypeConfigurationInvalid = "CONFIGURATION_INVALID"
 	ErrorTypeAPIKeyMissing        = "API_KEY_MISSING"
@@ -35,7 +35,7 @@ const (
 	ErrorTypeInvalidID            = "INVALID_ID"
 )
 
-// NewStreamError creates a new StreamError
+// NewStreamError creates a new StreamError.
 func NewStreamError(errorType, message string, cause error) *StreamError {
 	return &StreamError{
 		Type:    errorType,
@@ -44,37 +44,37 @@ func NewStreamError(errorType, message string, cause error) *StreamError {
 	}
 }
 
-// NewConfigurationError creates a configuration-related error
+// NewConfigurationError creates a configuration-related error.
 func NewConfigurationError(message string, cause error) *StreamError {
 	return NewStreamError(ErrorTypeConfigurationInvalid, message, cause)
 }
 
-// NewAPIKeyMissingError creates an API key missing error
+// NewAPIKeyMissingError creates an API key missing error.
 func NewAPIKeyMissingError(service string) *StreamError {
 	return NewStreamError(ErrorTypeAPIKeyMissing, fmt.Sprintf("API key missing for %s", service), nil)
 }
 
-// NewTMDBError creates a TMDB-related error
+// NewTMDBError creates a TMDB-related error.
 func NewTMDBError(message string, cause error) *StreamError {
 	return NewStreamError(ErrorTypeTMDBFailure, message, cause)
 }
 
-// NewTorrentSearchError creates a torrent search error
+// NewTorrentSearchError creates a torrent search error.
 func NewTorrentSearchError(message string, cause error) *StreamError {
 	return NewStreamError(ErrorTypeTorrentSearchFailed, message, cause)
 }
 
-// NewMagnetProcessError creates a magnet processing error
+// NewMagnetProcessError creates a magnet processing error.
 func NewMagnetProcessError(message string, cause error) *StreamError {
 	return NewStreamError(ErrorTypeMagnetProcessFailed, message, cause)
 }
 
-// NewTimeoutError creates a timeout error
+// NewTimeoutError creates a timeout error.
 func NewTimeoutError(operation string) *StreamError {
 	return NewStreamError(ErrorTypeTimeout, fmt.Sprintf("Operation timeout: %s", operation), nil)
 }
 
-// NewInvalidIDError creates an invalid ID error
+// NewInvalidIDError creates an invalid ID error.
 func NewInvalidIDError(id string) *StreamError {
 	return NewStreamError(ErrorTypeInvalidID, fmt.Sprintf("Invalid ID format: %s", id), nil)
 }

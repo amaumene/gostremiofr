@@ -7,6 +7,8 @@ const (
 	AddonVersion     = "1.0.0"
 	AddonName        = "GoStremioFR"
 	AddonDescription = "French torrent addon with YGG, TorrentsCSV, AllDebrid integration and TMDB catalogs"
+	AddonBackground  = "" // Optional: Add a background image URL if available
+	AddonLogo        = "" // Optional: Add a logo URL if available
 
 	// Default configuration values
 	DefaultPort     = "5000"

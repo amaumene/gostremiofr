@@ -75,3 +75,8 @@ coverage.html
 
 # Local development overrides
 docker-compose.override.yml
+
+# Various
+node_modules/
+package-lock.json
+package.json

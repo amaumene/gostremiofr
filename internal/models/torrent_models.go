@@ -1,11 +1,12 @@
 package models
 
 type TorrentInfo struct {
-	ID     string
-	Title  string
-	Hash   string
-	Source string
-	Size   int64 // Size in bytes
+	ID              string
+	Title           string
+	Hash            string
+	Source          string
+	Size            int64   // Size in bytes
+	ConfidenceScore float64 // Confidence score from torrentname parser
 }
 
 type YggTorrent struct {

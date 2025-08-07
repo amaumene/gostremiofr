@@ -1,3 +1,4 @@
+// Package handlers implements HTTP request handlers for the Stremio addon API.
 package handlers
 
 import (
@@ -8,11 +9,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Handler handles HTTP requests for the Stremio addon.
 type Handler struct {
 	services *services.Container
 	config   *config.Config
 }
 
+// New creates a new Handler with the provided services and configuration.
 func New(services *services.Container, config *config.Config) *Handler {
 	return &Handler{
 		services: services,
@@ -20,6 +23,7 @@ func New(services *services.Container, config *config.Config) *Handler {
 	}
 }
 
+// RegisterRoutes registers all HTTP routes for the Stremio addon.
 func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	// Home route
 	r.GET("/", h.handleHome)
@@ -44,7 +48,7 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	r.GET("/:configuration/stream/:type/:id", h.handleStreamWrapper)
 }
 
-// HandleStream is an exported wrapper for the internal handleStream method
+// HandleStream is an exported wrapper for the internal handleStream method.
 func (h *Handler) HandleStream(c *gin.Context) {
 	h.handleStream(c)
 }

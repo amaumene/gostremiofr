@@ -54,6 +54,7 @@ func (t *TMDB) fetchTMDBDetails(id, tmdbID, mediaType string) (*models.TMDBData,
 	}
 
 	t.logger.Debugf("fetching %s info for TMDB ID %s", mediaType, tmdbID)
+	t.logger.Debugf("[TMDB] API URL: %s", apiURL)
 
 	resp, err := t.httpClient.Get(apiURL)
 	if err != nil {
@@ -148,6 +149,7 @@ func (t *TMDB) fetchIMDBData(imdbID string) (*models.TMDBFindResponse, error) {
 		imdbID, t.apiKey)
 
 	t.logger.Debugf("fetching info for %s", imdbID)
+	t.logger.Debugf("[TMDB] API URL: %s", url)
 
 	resp, err := t.httpClient.Get(url)
 	if err != nil {
@@ -211,6 +213,7 @@ func (t *TMDB) fetchSearchResults(query string, page int) ([]json.RawMessage, er
 		t.apiKey, encodedQuery, page)
 
 	t.logger.Debugf("searching for '%s' page %d", query, page)
+	t.logger.Debugf("[TMDB] API URL: %s", apiURL)
 
 	resp, err := t.httpClient.Get(apiURL)
 	if err != nil {
@@ -278,6 +281,8 @@ func (t *TMDB) fetchMediaDetails(mediaType, tmdbID string) (interface{}, error) 
 func (t *TMDB) fetchMovieDetails(tmdbID string) (*models.TMDBMovieDetails, error) {
 	url := fmt.Sprintf("https://api.themoviedb.org/3/movie/%s?api_key=%s&append_to_response=credits",
 		tmdbID, t.apiKey)
+	
+	t.logger.Debugf("[TMDB] API URL: %s", url)
 
 	resp, err := t.httpClient.Get(url)
 	if err != nil {
@@ -300,6 +305,8 @@ func (t *TMDB) fetchMovieDetails(tmdbID string) (*models.TMDBMovieDetails, error
 func (t *TMDB) fetchTVDetailsWithAppend(tmdbID string) (*models.TMDBTVDetails, error) {
 	url := fmt.Sprintf("https://api.themoviedb.org/3/tv/%s?api_key=%s&append_to_response=credits,external_ids",
 		tmdbID, t.apiKey)
+	
+	t.logger.Debugf("[TMDB] API URL: %s", url)
 
 	resp, err := t.httpClient.Get(url)
 	if err != nil {

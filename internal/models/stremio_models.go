@@ -10,10 +10,14 @@ type Manifest struct {
 	Catalogs      []Catalog     `json:"catalogs"`
 	BehaviorHints BehaviorHints `json:"behaviorHints"`
 	IDPrefixes    []string      `json:"idPrefixes,omitempty"`
+	Background    string        `json:"background,omitempty"`
+	Logo          string        `json:"logo,omitempty"`
+	ContactEmail  string        `json:"contactEmail,omitempty"`
 }
 
 type BehaviorHints struct {
-	Configurable bool `json:"configurable"`
+	Configurable          bool `json:"configurable"`
+	ConfigurationRequired bool `json:"configurationRequired,omitempty"`
 }
 
 type Catalog struct {
