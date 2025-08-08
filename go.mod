@@ -3,6 +3,11 @@ module github.com/amaumene/gostremiofr
 go 1.24.3
 
 require (
+	github.com/amaumene/gostremiofr/pkg/alldebrid v0.0.0-00010101000000-000000000000
+	github.com/amaumene/gostremiofr/pkg/httputil v0.0.0
+	github.com/amaumene/gostremiofr/pkg/logger v0.0.0-00010101000000-000000000000
+	github.com/amaumene/gostremiofr/pkg/ratelimiter v0.0.0-00010101000000-000000000000
+	github.com/amaumene/gostremiofr/pkg/torrentsearch v0.0.0-00010101000000-000000000000
 	github.com/cehbz/torrentname v1.2.1
 	github.com/gin-gonic/gin v1.10.1
 	go.etcd.io/bbolt v1.4.2
@@ -35,4 +40,12 @@ require (
 	golang.org/x/text v0.15.0 // indirect
 	google.golang.org/protobuf v1.34.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
+)
+
+replace (
+	github.com/amaumene/gostremiofr/pkg/alldebrid => ./pkg/alldebrid
+	github.com/amaumene/gostremiofr/pkg/httputil => ./pkg/httputil
+	github.com/amaumene/gostremiofr/pkg/logger => ./pkg/logger
+	github.com/amaumene/gostremiofr/pkg/ratelimiter => ./pkg/ratelimiter
+	github.com/amaumene/gostremiofr/pkg/torrentsearch => ./pkg/torrentsearch
 )
