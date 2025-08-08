@@ -1,6 +1,8 @@
 # Build stage
 FROM golang:alpine AS builder
 
+RUN apk add --no-cache git
+
 # Set working directory
 WORKDIR /app
 
