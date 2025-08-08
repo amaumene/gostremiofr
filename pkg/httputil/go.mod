@@ -1,0 +1,3 @@
+module github.com/amaumene/gostremiofr/pkg/httputil
+
+go 1.21
