@@ -8,6 +8,16 @@ require (
 	go.etcd.io/bbolt v1.4.2
 )
 
+replace (
+	github.com/amaumene/gostremiofr/pkg/alldebrid => ./pkg/alldebrid
+	github.com/amaumene/gostremiofr/pkg/httputil => ./pkg/httputil
+	github.com/amaumene/gostremiofr/pkg/logger => ./pkg/logger
+	github.com/amaumene/gostremiofr/pkg/ratelimiter => ./pkg/ratelimiter
+	github.com/amaumene/gostremiofr/pkg/security => ./pkg/security
+	github.com/amaumene/gostremiofr/pkg/ssl => ./pkg/ssl
+	github.com/amaumene/gostremiofr/pkg/torrentsearch => ./pkg/torrentsearch
+)
+
 require (
 	github.com/bytedance/sonic v1.11.6 // indirect
 	github.com/bytedance/sonic/loader v0.1.1 // indirect
